@@ -1,0 +1,40 @@
+name: Task-Flow
+options:
+  bundleIdPrefix: com.eduardotorres
+  deploymentTarget:
+    iOS: "18.0"
+  defaultConfig: Debug
+  xcodeVersion: "26.4"
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "18.0"
+
+targets:
+  Task-Flow:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: App
+      - path: Models
+      - path: ViewModels
+      - path: Views
+      - path: Services
+      - path: Extensions
+    info:
+      path: Task-Flow/Info.plist
+      properties:
+        UILaunchScreen: {}
+        NSCalendarsFullAccessUsageDescription: "Task Flow syncs your tasks with Calendar so you can see them alongside your events."
+        NSRemindersFullAccessUsageDescription: "Task Flow syncs your tasks with Reminders so you can manage them in one place."
+        NSMicrophoneUsageDescription: "Task Flow uses your microphone to capture voice-dictated tasks."
+        NSSpeechRecognitionUsageDescription: "Task Flow uses speech recognition to convert your voice into task text."
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.eduardotorres.Task-Flow
+        SWIFT_STRICT_CONCURRENCY: complete
