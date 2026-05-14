@@ -1,0 +1,9 @@
+.claude-flow/
+CLAUDE.md
+pending-insights.jsonl
+*.xcuserstate
+xcuserdata/
+DerivedData/
+.DS_Store
+build/
+*.ipa
