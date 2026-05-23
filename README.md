@@ -1,6 +1,6 @@
 # Task-Flow
 
-iOS task manager built with SwiftUI, SwiftData, and EventKit. Targets iOS 18, written in Swift 6 with strict concurrency.
+iOS task manager built with SwiftUI, SwiftData, and EventKit. Targets iOS 19, written in Swift 6 with strict concurrency.
 
 ## Features
 
@@ -29,6 +29,8 @@ iOS task manager built with SwiftUI, SwiftData, and EventKit. Targets iOS 18, wr
 
 MVVM. `@Observable` replaces `ObservableObject`/`@Published` throughout.
 
+> **Swift 6 note:** All ViewModels must be `@MainActor`-isolated. The compiler enforces this — any UI state mutation from a background context is a compile error, not a runtime crash.
+
 ```
 App/            TaskFlowApp.swift — owns ModelContainer, injects EventKitService into environment
 Models/         Task, Project, Tag (SwiftData @Model), Priority enum
@@ -50,8 +52,8 @@ Extensions/     Color+Hex and other utilities
 
 ## Requirements
 
-- Xcode 16+
-- iOS 18.0+ deployment target
+- Xcode 16.0 or later required.
+- iOS 19.0+ deployment target
 - Swift 6
 
 ## Build
