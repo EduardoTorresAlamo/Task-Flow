@@ -77,19 +77,21 @@ import Observation
     /// - Throws: Any `AVAudioEngine` or `AVAudioSession` error encountered
     ///   during engine preparation or activation.
     func startListening() throws {
+        guard authorizationStatus == .authorized,
+              let recognizer,
+              recognizer.isAvailable else { return }
+
+        // Tear down any in-flight session before starting a fresh one.
+        // Must happen BEFORE activating the audio session below, because
+        // stopListening() deactivates the shared AVAudioSession.
+        stopListening()
+
         let audioSession = AVAudioSession.sharedInstance()
         // .record category mutes other audio; .measurement mode minimises
         // signal processing so the recognizer receives clean input.
         // .duckOthers lowers other app audio rather than silencing it entirely.
         try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
         try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-
-        guard authorizationStatus == .authorized,
-              let recognizer,
-              recognizer.isAvailable else { return }
-
-        // Tear down any in-flight session before starting a fresh one.
-        stopListening()
 
         let request = SFSpeechAudioBufferRecognitionRequest()
         // Partial results let the UI show live transcription as the user speaks.

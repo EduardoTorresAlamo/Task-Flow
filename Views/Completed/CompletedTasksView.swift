@@ -85,10 +85,13 @@ struct CompletedTasksView: View {
         }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
-                // Remove the EventKit event before deleting the task so
-                // CalendarSyncService can still read task.eventKitIdentifier.
-                Swift.Task { await calendarManager.removeSync(for: task) }
-                modelContext.delete(task)
+                // Remove the EventKit event first, then delete the task inside the
+                // same async task. Deleting synchronously here would invalidate the
+                // model before the scheduled removeSync could read task.eventKitIdentifier.
+                Swift.Task {
+                    await calendarManager.removeSync(for: task)
+                    modelContext.delete(task)
+                }
             }
         }
     }

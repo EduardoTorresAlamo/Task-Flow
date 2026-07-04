@@ -141,6 +141,10 @@ final class CalendarManager {
             syncState = .error(message: "Calendar access not granted")
             return
         }
+        // Mirror the eligibility rule used by syncAllTasks: a task without a
+        // due date has no meaningful time slot, and syncing it would create a
+        // phantom event starting "now" (CalendarSyncService falls back to Date()).
+        guard task.dueDate != nil else { return }
         syncState = .syncing
         syncService.sync(task: task)
         syncState = .done(lastSyncedAt: Date())

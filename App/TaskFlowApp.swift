@@ -47,6 +47,10 @@ struct TaskFlowApp: App {
         // CalendarSyncService depends on EventKitService, and CalendarManager
         // depends on both, so construction order matters here.
         let eks = EventKitService()
+        // Restore authorization state from a previous session synchronously
+        // (no prompt) so downstream services see the correct flags at construction
+        // time -- CalendarManager eagerly loads the calendar list when authorized.
+        eks.checkExistingAuthorization()
         let css = CalendarSyncService(eventKitService: eks)
         let cm  = CalendarManager(eventKitService: eks, syncService: css)
         _eventKitService     = State(initialValue: eks)

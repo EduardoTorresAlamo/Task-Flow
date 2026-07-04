@@ -153,19 +153,22 @@ struct NaturalLanguageParser {
         }
 
         // Remove common speech filler prefixes produced by voice dictation.
+        // `result` must be trimmed before each prefix check so that
+        // `dropFirst(filler.count)` removes exactly the filler characters;
+        // checking a trimmed lowercase copy against an untrimmed `result`
+        // would drop the wrong characters when leading whitespace is present.
         let fillers = ["remind me to", "remind me", "add task", "task:", "todo:", "to do:"]
-        var lower = result.lowercased().trimmingCharacters(in: .whitespaces)
+        result = result.trimmingCharacters(in: .whitespaces)
         for filler in fillers {
-            if lower.hasPrefix(filler) {
+            if result.lowercased().hasPrefix(filler) {
                 result = String(result.dropFirst(filler.count))
-                // Re-lowercase the trimmed result to check the next filler on a clean string.
-                lower = result.lowercased().trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: .whitespaces)
             }
         }
 
-        // Collapse multiple spaces introduced by keyword removal, then trim.
+        // Collapse runs of whitespace introduced by keyword removal, then trim.
         let clean = result
-            .replacingOccurrences(of: "  ", with: " ")
+            .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // Guard against an entirely-removed input by falling back to the original text.
         return clean.isEmpty ? text : clean
