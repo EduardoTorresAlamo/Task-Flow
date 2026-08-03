@@ -24,6 +24,7 @@ targets:
       - path: Views
       - path: Services
       - path: Extensions
+      - path: Shared
     info:
       path: Task-Flow/Info.plist
       properties:
@@ -34,7 +35,36 @@ targets:
         NSSpeechRecognitionUsageDescription: "Task Flow uses speech recognition to convert your voice into task text."
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        CFBundleURLTypes:
+          - CFBundleURLName: com.eduardotorres.Task-Flow.deeplink
+            CFBundleURLSchemes:
+              - taskflow
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.eduardotorres.Task-Flow
         SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_ENTITLEMENTS: App/TaskFlow.entitlements
+    dependencies:
+      - target: TaskFlowWidgetExtension
+        embed: true
+
+  TaskFlowWidgetExtension:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: Widget
+      - path: Models
+      - path: Extensions
+      - path: Shared
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Task Flow
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.eduardotorres.Task-Flow.TaskFlowWidget
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_ENTITLEMENTS: Widget/TaskFlowWidget.entitlements

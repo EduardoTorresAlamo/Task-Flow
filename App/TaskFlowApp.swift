@@ -33,14 +33,15 @@ struct TaskFlowApp: App {
     /// is tied to the app lifetime rather than a single view.
     @State private var voiceTaskService: VoiceTaskService
 
+    /// Captures task ids opened from the Widget extension via `taskflow://`
+    /// deep links so views can present the tapped task.
+    @State private var deepLinkCoordinator = DeepLinkCoordinator()
+
     init() {
-        // Register all three SwiftData models in a single Schema so the
-        // store knows about cross-model relationships at container creation time.
-        do {
-            container = try ModelContainer(for: Schema([Task.self, Project.self, Tag.self]))
-        } catch {
-            fatalError("Failed to create ModelContainer: \(error)")
-        }
+        // Build the container against the shared App Group store so the Widget
+        // extension reads the exact same database this app writes to. Schema
+        // registration lives in TaskFlowContainer (Shared/), used by both targets.
+        container = TaskFlowContainer.makeShared()
 
         // Build the service graph manually because SwiftUI's DI system
         // cannot create @Observable services that have inter-dependencies.
@@ -67,6 +68,14 @@ struct TaskFlowApp: App {
                 .environment(eventKitService)
                 .environment(calendarManager)
                 .environment(voiceTaskService)
+                .environment(deepLinkCoordinator)
+                // Route widget deep links (taskflow://task/<uuid>) into the
+                // coordinator; the navigation layer can observe pendingTaskID.
+                .onOpenURL { url in
+                    if let id = TaskDeepLink.taskID(from: url) {
+                        deepLinkCoordinator.open(taskID: id)
+                    }
+                }
         }
         // Attach the model container to the scene so every view in the
         // hierarchy gets access to the shared ModelContext automatically.
