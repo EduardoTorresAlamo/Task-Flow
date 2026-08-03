@@ -75,6 +75,38 @@ struct TaskEditView: View {
                         }
                         .pickerStyle(.segmented)
                     }
+                    Section("Repeat") {
+                        // A Menu lets the user pick a base frequency; the current
+                        // selection is shown trailing. Weekly rules reveal a
+                        // weekday picker below.
+                        Menu {
+                            Button("Never") { setRecurrence(nil) }
+                            Button("Daily") { setRecurrence(.daily) }
+                            Button("Weekdays") { setRecurrence(.weekdays) }
+                            Button("Weekly") { setRecurrence(.weekly(day: defaultWeekday)) }
+                            Button("Monthly") { setRecurrence(.monthly(day: defaultDayOfMonth)) }
+                            Button("Yearly") { setRecurrence(.yearly) }
+                        } label: {
+                            HStack {
+                                Text("Repeat")
+                                    .foregroundStyle(.white)
+                                Spacer()
+                                Text(task.recurrenceRule?.label ?? "Never")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if case .weekly(let day)? = task.recurrenceRule?.frequency {
+                            Picker("On", selection: Binding(
+                                get: { day },
+                                set: { setRecurrence(.weekly(day: $0)) }
+                            )) {
+                                ForEach(Weekday.allCases) { wd in
+                                    Text(wd.label).tag(wd)
+                                }
+                            }
+                            .foregroundStyle(.white)
+                        }
+                    }
                 }
                 // Hide the default white Form background so the black ZStack shows through.
                 .scrollContentBackground(.hidden)
@@ -114,5 +146,41 @@ struct TaskEditView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Recurrence Helpers
+
+    /// Applies a new recurrence frequency to the task, preserving any existing
+    /// interval and end conditions. Passing `nil` clears the recurrence entirely.
+    ///
+    /// - Parameter frequency: The chosen frequency, or `nil` for a one-off task.
+    private func setRecurrence(_ frequency: RecurrenceFrequency?) {
+        guard let frequency else {
+            task.recurrenceRule = nil
+            task.recurrenceEnd = nil
+            return
+        }
+        let existing = task.recurrenceRule
+        task.recurrenceRule = RecurrenceRule(
+            frequency: frequency,
+            interval: existing?.interval ?? 1,
+            endDate: existing?.endDate,
+            maxOccurrences: existing?.maxOccurrences
+        )
+        task.recurrenceEnd = existing?.endDate
+    }
+
+    /// The weekday to default a newly-chosen weekly rule to: the task's due-date
+    /// weekday when set, otherwise Monday.
+    private var defaultWeekday: Weekday {
+        guard let dueDate = task.dueDate else { return .monday }
+        return Weekday.from(dueDate)
+    }
+
+    /// The day-of-month to default a newly-chosen monthly rule to: the task's
+    /// due-date day when set, otherwise the 1st.
+    private var defaultDayOfMonth: Int {
+        guard let dueDate = task.dueDate else { return 1 }
+        return Calendar.current.component(.day, from: dueDate)
     }
 }

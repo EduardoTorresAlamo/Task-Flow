@@ -11,6 +11,7 @@
 		0F64131DE6A0C3792CD4413D /* NaturalLanguageParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFB831DB87C3F5364DCA1AA1 /* NaturalLanguageParser.swift */; };
 		0F7798792EAB513AAAD69FF7 /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6C90BDAE7709BD324B719CE /* Tag.swift */; };
 		0FB35EEEDB94AB11925863E4 /* Priority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B27DA00C00DCFB2351EB73C /* Priority.swift */; };
+		AA01000000000000000000A1 /* RecurrenceRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01000000000000000000B1 /* RecurrenceRule.swift */; };
 		1C2376121070934E2413E738 /* VoiceTaskService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 467F6CBF777FBFAE0FA5F3AB /* VoiceTaskService.swift */; };
 		2452EFF4443E0F2547DB36C6 /* CalendarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62F2E81062179D0F6CAC22 /* CalendarManager.swift */; };
 		279BA91F0EB00B7AFF405CF6 /* TaskFlowApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04AFE925334EF7462A4C4DB8 /* TaskFlowApp.swift */; };
@@ -36,6 +37,7 @@
 		04AFE925334EF7462A4C4DB8 /* TaskFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskFlowApp.swift; sourceTree = "<group>"; };
 		18A5B81C3096214F72E415D6 /* TaskEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskEditView.swift; sourceTree = "<group>"; };
 		1B27DA00C00DCFB2351EB73C /* Priority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Priority.swift; sourceTree = "<group>"; };
+		BB01000000000000000000B1 /* RecurrenceRule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecurrenceRule.swift; sourceTree = "<group>"; };
 		256E000F23FE32B7CC42B278 /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		37BC0672924A00BE70A48A16 /* CompletedTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletedTasksView.swift; sourceTree = "<group>"; };
 		3D5472CE190FF25D28B566A2 /* CalendarSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSyncService.swift; sourceTree = "<group>"; };
@@ -116,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				1B27DA00C00DCFB2351EB73C /* Priority.swift */,
+				BB01000000000000000000B1 /* RecurrenceRule.swift */,
 				256E000F23FE32B7CC42B278 /* Project.swift */,
 				D6C90BDAE7709BD324B719CE /* Tag.swift */,
 				7D58D64C6B2FEF14E9C335E7 /* Task.swift */,
@@ -244,6 +247,7 @@
 				8A09C388983AABC30EB1D46E /* NaturalLanguageInputBar.swift in Sources */,
 				0F64131DE6A0C3792CD4413D /* NaturalLanguageParser.swift in Sources */,
 				0FB35EEEDB94AB11925863E4 /* Priority.swift in Sources */,
+				AA01000000000000000000A1 /* RecurrenceRule.swift in Sources */,
 				DCB71AA3461452A0841BDD74 /* PriorityBadge.swift in Sources */,
 				F68CE2EA06E55D162AC01301 /* Project.swift in Sources */,
 				852C67EB167C3F1B766924B5 /* RootTabView.swift in Sources */,

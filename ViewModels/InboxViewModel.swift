@@ -65,6 +65,12 @@ import Observation
     func commitTask() async {
         guard let parsed = parsedPreview, !parsed.title.isEmpty else { return }
         let task = Task(title: parsed.title, dueDate: parsed.dueDate, priority: parsed.priority, notes: parsed.notes)
+        // Carry any detected recurrence onto the task, mirroring the rule's own
+        // endDate onto recurrenceEnd so the task-level cutoff stays in sync.
+        if let recurrence = parsed.recurrence {
+            task.recurrenceRule = recurrence
+            task.recurrenceEnd = recurrence.endDate
+        }
         // Insert into the context immediately so the task appears in @Query results
         // before the async sync completes.
         modelContext.insert(task)
@@ -73,5 +79,48 @@ import Observation
         // Sync to EventKit asynchronously so the UI is not blocked waiting for
         // the calendar store write.
         await calendarManager.syncTask(task)
+    }
+
+    /// Toggles a task's completion state, applying recurrence rules on completion.
+    ///
+    /// Un-completing simply clears the completed flags. Completing a non-recurring
+    /// task marks it done. Completing a recurring task marks the original done
+    /// (preserving it as history) and spawns the next occurrence via
+    /// `completeRecurring(_:)`.
+    ///
+    /// - Parameter task: The task whose completion state should be toggled.
+    func toggleCompletion(_ task: Task) async {
+        if task.isCompleted {
+            task.isCompleted = false
+            task.completedAt = nil
+            task.updatedAt = Date()
+            return
+        }
+        if task.isRecurring {
+            await completeRecurring(task)
+        } else {
+            task.isCompleted = true
+            task.completedAt = Date()
+            task.updatedAt = Date()
+        }
+    }
+
+    /// Completes a recurring task and generates its successor.
+    ///
+    /// The original task is left marked complete so it remains in the user's
+    /// history. A new task for the next occurrence (same title, project, tags,
+    /// priority, notes, and recurrence rule, with an advanced due date) is
+    /// inserted and synced to the calendar. When the recurrence has ended
+    /// (`makeNextOccurrence` returns `nil`) no successor is created.
+    ///
+    /// - Parameter task: The recurring task being completed.
+    private func completeRecurring(_ task: Task) async {
+        task.isCompleted = true
+        task.completedAt = Date()
+        task.updatedAt = Date()
+
+        guard let next = task.makeNextOccurrence() else { return }
+        modelContext.insert(next)
+        await calendarManager.syncTask(next)
     }
 }

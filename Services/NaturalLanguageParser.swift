@@ -16,6 +16,8 @@ struct ParsedTaskInput {
     var priority: Priority
     /// Any supplementary text found after a recognized note connector word.
     var notes: String
+    /// The recurrence rule inferred from repetition phrases, or `nil` if none.
+    var recurrence: RecurrenceRule?
 }
 
 /// Parses a free-form natural-language string into a structured `ParsedTaskInput`.
@@ -44,11 +46,12 @@ struct NaturalLanguageParser {
     /// - Returns: A `ParsedTaskInput` with extracted fields. All fields have
     ///   safe defaults so callers never need to guard against nil structs.
     func parse(_ input: String) -> ParsedTaskInput {
-        let dueDate  = extractDate(from: input)
-        let priority = extractPriority(from: input)
-        let notes    = extractNotes(from: input)
-        let title    = buildTitle(from: input, date: dueDate, notes: notes)
-        return ParsedTaskInput(title: title, dueDate: dueDate, priority: priority, notes: notes)
+        let dueDate    = extractDate(from: input)
+        let priority   = extractPriority(from: input)
+        let notes      = extractNotes(from: input)
+        let recurrence = extractRecurrence(from: input, dueDate: dueDate)
+        let title      = buildTitle(from: input, date: dueDate, notes: notes)
+        return ParsedTaskInput(title: title, dueDate: dueDate, priority: priority, notes: notes, recurrence: recurrence)
     }
 
     // MARK: - Private Extraction Helpers
@@ -103,6 +106,110 @@ struct NaturalLanguageParser {
         return ""
     }
 
+    /// Detects a recurrence rule from repetition phrases in the input.
+    ///
+    /// Matching runs from most specific to least specific so that, for example,
+    /// "every 2 weeks" is read as biweekly rather than falling through to the
+    /// generic weekly branch. Phrases with no repetition signal (e.g.
+    /// "call dentist tomorrow urgent") return `nil`.
+    ///
+    /// Where a frequency needs an anchor (the weekday for weekly rules, the
+    /// day-of-month for monthly rules) it is derived from `dueDate` when one was
+    /// detected, falling back to Monday / the 1st.
+    ///
+    /// - Parameters:
+    ///   - text: The raw user input.
+    ///   - dueDate: The date extracted from the same input, used to anchor
+    ///     weekly and monthly rules.
+    /// - Returns: The inferred `RecurrenceRule`, or `nil` if no recurrence phrase matched.
+    private func extractRecurrence(from text: String, dueDate: Date?) -> RecurrenceRule? {
+        let lower = text.lowercased()
+
+        // "every N days / weeks / months" -- numeric interval, checked first.
+        if let rule = extractNumericInterval(from: lower, dueDate: dueDate) { return rule }
+
+        // A specific weekday, e.g. "every monday".
+        for day in Weekday.allCases where lower.contains("every \(day.label.lowercased())") {
+            return RecurrenceRule(frequency: .weekly(day: day))
+        }
+
+        if lower.contains("every weekday") || lower.contains("weekdays") {
+            return RecurrenceRule(frequency: .weekdays)
+        }
+        if lower.contains("biweekly") || lower.contains("fortnight") || lower.contains("every other week") {
+            return RecurrenceRule(frequency: .biweekly(day: anchorWeekday(dueDate)))
+        }
+        if lower.contains("every day") || lower.contains("daily") || lower.contains("everyday") {
+            return RecurrenceRule(frequency: .daily)
+        }
+        if lower.contains("every week") || lower.contains("weekly") {
+            return RecurrenceRule(frequency: .weekly(day: anchorWeekday(dueDate)))
+        }
+        if lower.contains("every month") || lower.contains("monthly") {
+            return RecurrenceRule(frequency: .monthly(day: anchorDayOfMonth(dueDate)))
+        }
+        if lower.contains("every year") || lower.contains("yearly") || lower.contains("annually") {
+            return RecurrenceRule(frequency: .yearly)
+        }
+        return nil
+    }
+
+    /// Parses an explicit numeric interval such as "every 2 days" or
+    /// "every 3 weeks" into a rule, or returns `nil` if no such phrase is present.
+    ///
+    /// An interval of 2 weeks is normalised to the dedicated `.biweekly`
+    /// frequency so it round-trips consistently with keyword detection.
+    private func extractNumericInterval(from lower: String, dueDate: Date?) -> RecurrenceRule? {
+        guard let regex = try? NSRegularExpression(pattern: #"every\s+(\d+)\s+(day|week|month|year)s?"#),
+              let match = regex.firstMatch(in: lower, range: NSRange(lower.startIndex..., in: lower)),
+              let numberRange = Range(match.range(at: 1), in: lower),
+              let unitRange = Range(match.range(at: 2), in: lower),
+              let interval = Int(lower[numberRange])
+        else { return nil }
+
+        let unit = String(lower[unitRange])
+        switch unit {
+        case "day":
+            return RecurrenceRule(frequency: .daily, interval: interval)
+        case "week":
+            if interval == 2 { return RecurrenceRule(frequency: .biweekly(day: anchorWeekday(dueDate))) }
+            return RecurrenceRule(frequency: .weekly(day: anchorWeekday(dueDate)), interval: interval)
+        case "month":
+            return RecurrenceRule(frequency: .monthly(day: anchorDayOfMonth(dueDate)), interval: interval)
+        case "year":
+            return RecurrenceRule(frequency: .yearly, interval: interval)
+        default:
+            return nil
+        }
+    }
+
+    /// The weekday to anchor a weekly/biweekly rule to: the due date's weekday
+    /// when a date was detected, otherwise Monday.
+    private func anchorWeekday(_ dueDate: Date?) -> Weekday {
+        guard let dueDate else { return .monday }
+        return Weekday.from(dueDate)
+    }
+
+    /// The day-of-month to anchor a monthly rule to: the due date's day when a
+    /// date was detected, otherwise the 1st.
+    private func anchorDayOfMonth(_ dueDate: Date?) -> Int {
+        guard let dueDate else { return 1 }
+        return Calendar.current.component(.day, from: dueDate)
+    }
+
+    /// Recurrence phrases stripped from the title so they do not appear in it.
+    ///
+    /// The numeric "every N units" form is removed separately via regex in
+    /// `buildTitle`; this list covers the keyword forms.
+    private static let recurrenceMarkers: [String] = [
+        "every weekday", "every other week", "every day", "every week",
+        "every month", "every year",
+        "every monday", "every tuesday", "every wednesday", "every thursday",
+        "every friday", "every saturday", "every sunday",
+        "weekdays", "biweekly", "fortnightly", "fortnight", "everyday",
+        "daily", "weekly", "monthly", "yearly", "annually"
+    ]
+
     /// Builds the cleaned task title by removing date strings, priority keywords,
     /// speech filler prefixes, and the notes segment from the raw input.
     ///
@@ -149,6 +256,18 @@ struct NaturalLanguageParser {
                                "must", "need to", "low priority", "whenever", "someday",
                                "no rush", "eventually"]
         for marker in priorityMarkers {
+            result = result.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
+        }
+
+        // Remove recurrence phrases so they do not leak into the title.
+        // The numeric "every N units" form is stripped first via regex, then the
+        // keyword forms (longest-first ordering is preserved in the source list).
+        result = result.replacingOccurrences(
+            of: #"every\s+\d+\s+(day|week|month|year)s?"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        for marker in Self.recurrenceMarkers {
             result = result.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
         }
 

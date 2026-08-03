@@ -16,6 +16,13 @@ struct TaskRowView: View {
     /// Defaults to `nil` so rows can be used in read-only contexts without a handler.
     var onTap: (() -> Void)? = nil
 
+    /// Optional callback invoked when the user taps the completion toggle.
+    ///
+    /// When provided, the parent owns the completion logic (e.g. spawning the next
+    /// occurrence of a recurring task through `InboxViewModel`). When `nil`, the row
+    /// falls back to mutating the task's completion flags directly.
+    var onToggleComplete: (() -> Void)? = nil
+
     /// Shared, statically-allocated date formatter used across all row instances.
     ///
     /// `static let` ensures only one formatter is ever created, regardless of how
@@ -33,10 +40,16 @@ struct TaskRowView: View {
                 // Completion toggle button: directly mutates the @Bindable task
                 // properties so the change is persisted to SwiftData immediately.
                 Button {
-                    task.isCompleted.toggle()
-                    // Record or clear the completion timestamp in sync with the flag.
-                    task.completedAt = task.isCompleted ? Date() : nil
-                    task.updatedAt = Date()
+                    if let onToggleComplete {
+                        // Defer to the parent so recurring-task completion can spawn
+                        // the next occurrence rather than just flipping the flag.
+                        onToggleComplete()
+                    } else {
+                        task.isCompleted.toggle()
+                        // Record or clear the completion timestamp in sync with the flag.
+                        task.completedAt = task.isCompleted ? Date() : nil
+                        task.updatedAt = Date()
+                    }
                 } label: {
                     Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
                         .font(.title3)

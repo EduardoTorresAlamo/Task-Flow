@@ -45,6 +45,23 @@ import SwiftData
     /// or when the user has not granted calendar access.
     var eventKitIdentifier: String?
 
+    /// The recurrence specification for this task, or `nil` for a one-off task.
+    ///
+    /// Stored as a single `Codable` SwiftData attribute. When set, completing
+    /// the task spawns the next occurrence via `makeNextOccurrence(calendar:)`.
+    var recurrenceRule: RecurrenceRule?
+
+    /// An optional hard cutoff for the recurrence, mirrored from the rule's
+    /// `endDate` at save time. Occurrences whose due date falls after this are
+    /// never generated. `nil` means the recurrence has no task-level cutoff.
+    var recurrenceEnd: Date?
+
+    /// The 1-based index of this task within its recurrence series.
+    ///
+    /// The original task is occurrence 1; each generated successor increments
+    /// the count. Used to enforce `RecurrenceRule.maxOccurrences`.
+    var recurrenceCount: Int = 1
+
     /// The project this task belongs to, if any.
     ///
     /// `deleteRule: .nullify` means deleting a `Project` orphans the task
@@ -81,5 +98,39 @@ import SwiftData
         self.dueDate = dueDate
         self.priority = priority
         self.notes = notes
+    }
+
+    /// Whether this task repeats on a schedule.
+    var isRecurring: Bool { recurrenceRule != nil }
+
+    /// Builds the next occurrence of a recurring task, carrying forward its
+    /// metadata and recurrence configuration, or `nil` if the series has ended.
+    ///
+    /// The series ends when any of the following holds:
+    /// - the task has no `recurrenceRule` or no `dueDate` to advance from;
+    /// - the `maxOccurrences` cap has been reached;
+    /// - the computed next due date falls after the rule's `endDate` or the
+    ///   task's `recurrenceEnd` cutoff.
+    ///
+    /// Subtasks are intentionally not copied: each occurrence starts fresh.
+    ///
+    /// - Parameter calendar: The calendar used for date arithmetic; defaults to `.current`.
+    /// - Returns: A new, unsaved `Task` for the next occurrence, or `nil` if the
+    ///   recurrence has ended. The caller is responsible for inserting it into a context.
+    func makeNextOccurrence(calendar: Calendar = .current) -> Task? {
+        guard let rule = recurrenceRule, let base = dueDate else { return nil }
+        // Enforce the occurrence cap, counting the original as occurrence 1.
+        if let maxOccurrences = rule.maxOccurrences, recurrenceCount >= maxOccurrences { return nil }
+        guard let nextDue = rule.nextDate(after: base, calendar: calendar) else { return nil }
+        // Respect the task-level cutoff in addition to the rule's own endDate.
+        if let recurrenceEnd, nextDue > recurrenceEnd { return nil }
+
+        let next = Task(title: title, dueDate: nextDue, priority: priority, notes: notes)
+        next.project = project
+        next.tags = tags
+        next.recurrenceRule = rule
+        next.recurrenceEnd = recurrenceEnd
+        next.recurrenceCount = recurrenceCount + 1
+        return next
     }
 }

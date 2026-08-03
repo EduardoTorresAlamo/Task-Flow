@@ -65,7 +65,17 @@ struct SmartInboxView: View {
                         // large task lists.
                         LazyVStack(spacing: 8) {
                             ForEach(tasks) { task in
-                                TaskRowView(task: task, onTap: { selectedTask = task })
+                                TaskRowView(
+                                    task: task,
+                                    onTap: { selectedTask = task },
+                                    onToggleComplete: {
+                                        // Route completion through the view model so a
+                                        // recurring task spawns its next occurrence.
+                                        if let vm = viewModel {
+                                            Swift.Task { await vm.toggleCompletion(task) }
+                                        }
+                                    }
+                                )
                             }
                         }
                         .padding(.horizontal)
