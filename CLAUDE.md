@@ -48,6 +48,37 @@ DEVELOPER_DIR=~/Downloads/Xcode-beta.app/Contents/Developer \
 
 There is currently no test target. `Task-FlowTests` does not exist.
 
+### On the physical iPhone
+
+Signing is automatic against the free Personal Team `TKWXX2M2X3`, set as
+`DEVELOPMENT_TEAM` in `project.yml`. `-allowProvisioningUpdates` provisions both
+bundle IDs and the `group.com.eduardotorres.Task-Flow` App Group with no portal
+access and no paid membership. A free team's build **expires after 7 days** and
+must be reinstalled.
+
+The device UDID is stable; re-list with `xcrun devicectl list devices` if it changes.
+
+```bash
+export DEVELOPER_DIR=~/Downloads/Xcode-beta.app/Contents/Developer
+DEV=46DF69D7-AD34-56BB-802A-57BA3B631155   # iPhone 17 Pro Max, iOS 27 beta
+
+xcodebuild -scheme Task-Flow -destination "platform=iOS,id=$DEV" \
+  -derivedDataPath /tmp/tf-dev -allowProvisioningUpdates build
+
+xcrun devicectl device install app --device $DEV \
+  /tmp/tf-dev/Build/Products/Debug-iphoneos/Task-Flow.app
+
+xcrun devicectl device process launch --device $DEV com.eduardotorres.Task-Flow
+```
+
+Device prerequisites, both one-time and neither doable from the CLI: Developer
+Mode on (Settings > Privacy & Security), and the signing certificate trusted
+(Settings > General > VPN & Device Management).
+
+**The device is the only place dictation and the widget can be tested.** The
+simulator ships no `SpeechTranscriber` assets, and widgets cannot be screenshotted
+from the CLI.
+
 ### One expected warning
 
 `VoiceTaskService` calls `installTap(onBus:bufferSize:format:block:)`, which iOS

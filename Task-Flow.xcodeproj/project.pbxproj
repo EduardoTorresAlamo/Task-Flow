@@ -348,6 +348,12 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 2700;
 				TargetAttributes = {
+					30CF0A8F2F519CBF7F891A13 = {
+						DevelopmentTeam = TKWXX2M2X3;
+					};
+					EB1B3EDE759EFFD9681626A2 = {
+						DevelopmentTeam = TKWXX2M2X3;
+					};
 				};
 			};
 			buildConfigurationList = 1B6F5A3795A9A9D095A5D5DA /* Build configuration list for PBXProject "Task-Flow" */;
@@ -488,6 +494,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = TKWXX2M2X3;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -571,6 +578,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = TKWXX2M2X3;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;

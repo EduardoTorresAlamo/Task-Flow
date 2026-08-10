@@ -11,6 +11,10 @@ settings:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: complete
     IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+    # Free Personal Team. Automatic signing provisions both bundle IDs and the
+    # App Group with -allowProvisioningUpdates; no portal access needed.
+    # Caveat of a free team: the build expires after 7 days and must be reinstalled.
+    DEVELOPMENT_TEAM: "TKWXX2M2X3"
 
 targets:
   Task-Flow:
