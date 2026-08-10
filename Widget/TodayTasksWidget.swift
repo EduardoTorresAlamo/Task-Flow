@@ -1,6 +1,5 @@
 import WidgetKit
 import SwiftUI
-import SwiftData
 
 /// A lightweight, `Sendable` value snapshot of a `Task` for widget rendering.
 ///
@@ -35,6 +34,13 @@ struct TodayTasksEntry: TimelineEntry {
     /// renders these; smaller families ignore the field.
     let projectSummaries: [ProjectSummary]
 
+    /// Set when the shared store could not be opened.
+    ///
+    /// The widget renders this instead of an empty list, because "no tasks" and
+    /// "could not read your tasks" are different things and showing the first
+    /// when the second is true is a lie the user cannot debug.
+    var loadError: String? = nil
+
     /// Placeholder content shown in the widget gallery and while loading.
     static let placeholder = TodayTasksEntry(
         date: .now,
@@ -52,104 +58,64 @@ struct TodayTasksEntry: TimelineEntry {
     )
 }
 
-/// Supplies timeline entries by reading today's pending tasks from the shared store.
+/// Supplies timeline entries by decoding the snapshot the app publishes.
+///
+/// Contains no SwiftData at all, deliberately — see `WidgetSnapshot` for why.
+/// That also makes the provider synchronous and effectively free: one small
+/// file read, no container, no schema, no fetch.
 struct TodayTasksProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> TodayTasksEntry {
         .placeholder
     }
 
     func snapshot(for configuration: ProjectFilterIntent, in context: Context) async -> TodayTasksEntry {
-        await makeEntry(for: configuration)
+        makeEntry(for: configuration)
     }
 
     func timeline(for configuration: ProjectFilterIntent, in context: Context) async -> Timeline<TodayTasksEntry> {
-        let entry = await makeEntry(for: configuration)
+        let entry = makeEntry(for: configuration)
         // Refresh twice an hour so due-date relative text and the today-window
-        // stay reasonably fresh without hammering the widget budget.
+        // stay reasonably fresh without hammering the widget budget. The app
+        // also reloads the timeline directly whenever it publishes a snapshot,
+        // so this is only the floor, not the usual path.
         let nextRefresh = Calendar.current.date(byAdding: .minute, value: 30, to: .now)
             ?? Date(timeIntervalSinceNow: 1800)
         return Timeline(entries: [entry], policy: .after(nextRefresh))
     }
 
-    /// Fetches today's incomplete tasks, applies the project filter, and sorts
-    /// by priority (high → low), then by due time.
-    @MainActor
-    private func makeEntry(for configuration: ProjectFilterIntent) async -> TodayTasksEntry {
-        let context = TaskFlowContainer.makeShared().mainContext
+    /// Builds the entry from the published snapshot, applying the project filter.
+    private func makeEntry(for configuration: ProjectFilterIntent) -> TodayTasksEntry {
+        let snapshot = WidgetSnapshotStore.read()
 
-        let calendar = Calendar.current
-        let startOfDay = calendar.startOfDay(for: .now)
-        let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
-        // Sentinel used so nil-due tasks fall outside the today window in the predicate.
-        let farPast = Date.distantPast
-
-        let descriptor = FetchDescriptor<Task>(
-            predicate: #Predicate { task in
-                !task.isCompleted
-                    && (task.dueDate ?? farPast) >= startOfDay
-                    && (task.dueDate ?? farPast) < endOfDay
+        let selectedProject = configuration.project?.id
+        let tasks = snapshot.tasks
+            .filter { selectedProject == nil || $0.projectID == selectedProject }
+            .map { task in
+                TaskSnapshot(
+                    id: task.id,
+                    title: task.title,
+                    priority: Priority(rawValue: task.priorityRaw) ?? .none,
+                    dueDate: task.dueDate,
+                    projectColorHex: task.projectColorHex
+                )
             }
-        )
 
-        let fetched = (try? context.fetch(descriptor)) ?? []
-
-        // Filter by the configured project in memory (robust across optional
-        // relationships) and sort by priority then due time.
-        let filtered: [Task]
-        if let projectID = configuration.project?.id {
-            filtered = fetched.filter { $0.project?.id == projectID }
-        } else {
-            filtered = fetched
-        }
-
-        let sorted = filtered.sorted { lhs, rhs in
-            if lhs.priority.rawValue != rhs.priority.rawValue {
-                return lhs.priority.rawValue > rhs.priority.rawValue
-            }
-            return (lhs.dueDate ?? .distantFuture) < (rhs.dueDate ?? .distantFuture)
-        }
-
-        // Cap at what the largest family can show; the view slices per family.
-        let snapshots = sorted.prefix(12).map { task in
-            TaskSnapshot(
-                id: task.id,
-                title: task.title,
-                priority: task.priority,
-                dueDate: task.dueDate,
-                projectColorHex: task.project?.colorHex
-            )
-        }
+        let summaries = snapshot.projects
+            .filter { $0.pendingCount > 0 }
+            .prefix(3)
+            .map { ProjectSummary(id: $0.id, name: $0.name, colorHex: $0.colorHex, count: $0.pendingCount) }
 
         return TodayTasksEntry(
             date: .now,
-            tasks: Array(snapshots),
+            tasks: tasks,
             projectName: configuration.project?.name,
-            projectSummaries: projectSummaries(in: context)
+            projectSummaries: Array(summaries),
+            // The app has never run, so there is nothing to show and saying so
+            // beats an empty list that looks like "you are all caught up".
+            loadError: snapshot.generatedAt == .distantPast
+                ? "Open Task Flow once to set up the widget."
+                : nil
         )
-    }
-
-    /// The three busiest projects by pending task count.
-    ///
-    /// Deliberately not restricted to today's window: the footer strip answers
-    /// "where is my outstanding work" rather than "what is due in the next few
-    /// hours", which the rows above it already cover.
-    @MainActor
-    private func projectSummaries(in context: ModelContext) -> [ProjectSummary] {
-        let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)])
-        let projects = (try? context.fetch(descriptor)) ?? []
-        return projects
-            .map { project in
-                ProjectSummary(
-                    id: project.id,
-                    name: project.name,
-                    colorHex: project.colorHex,
-                    count: project.tasks.filter { !$0.isCompleted }.count
-                )
-            }
-            .filter { $0.count > 0 }
-            .sorted { $0.count > $1.count }
-            .prefix(3)
-            .map { $0 }
     }
 }
 

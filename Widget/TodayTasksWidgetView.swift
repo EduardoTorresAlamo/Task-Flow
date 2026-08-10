@@ -17,6 +17,39 @@ struct TodayTasksWidgetView: View {
     let entry: TodayTasksEntry
 
     var body: some View {
+        if let loadError = entry.loadError {
+            errorLayout(loadError)
+        } else {
+            content
+        }
+    }
+
+    /// Shown when the shared store could not be read.
+    ///
+    /// Deliberately distinct from the "All clear for today" empty state: the
+    /// user needs to be able to tell a working widget with nothing due from a
+    /// widget that cannot see their data at all.
+    private func errorLayout(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 12, weight: .medium))
+                Text("Task Flow")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(Theme.orange)
+
+            Text(message)
+                .font(.system(size: family == .systemSmall ? 10 : 11))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(family == .systemSmall ? 6 : 4)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch family {
         case .systemSmall:
             smallLayout

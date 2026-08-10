@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import WidgetKit
 
 /// The top-level app entry point for Task-Flow.
 ///
@@ -37,11 +38,14 @@ struct TaskFlowApp: App {
     /// deep links so views can present the tapped task.
     @State private var deepLinkCoordinator = DeepLinkCoordinator()
 
+    /// Used to refresh the widget when the app stops being the active scene.
+    @Environment(\.scenePhase) private var scenePhase
+
     init() {
         // Build the container against the shared App Group store so the Widget
         // extension reads the exact same database this app writes to. Schema
         // registration lives in TaskFlowContainer (Shared/), used by both targets.
-        container = TaskFlowContainer.makeShared()
+        container = TaskFlowContainer.makeForApp()
 
         // Build the service graph manually because SwiftUI's DI system
         // cannot create @Observable services that have inter-dependencies.
@@ -80,5 +84,14 @@ struct TaskFlowApp: App {
         // Attach the model container to the scene so every view in the
         // hierarchy gets access to the shared ModelContext automatically.
         .modelContainer(container)
+        // Republish the widget's data whenever the app leaves the foreground.
+        // The widget cannot read SwiftData itself, so this is the only way its
+        // content ever changes; without it the Home Screen kept showing
+        // whatever was true when the snapshot was last written.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                WidgetSnapshotPublisher.publish(from: container.mainContext)
+            }
+        }
     }
 }

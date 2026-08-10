@@ -1,5 +1,4 @@
 import AppIntents
-import SwiftData
 
 /// A selectable project used to configure the widget's filter.
 ///
@@ -24,28 +23,26 @@ struct ProjectEntity: AppEntity {
 
 /// Supplies the list of projects to the widget configuration UI.
 ///
-/// Reads from the shared App Group SwiftData store so the choices match the
-/// projects the user actually has in the app.
+/// Reads the snapshot the app publishes to the App Group, not SwiftData: this
+/// query runs inside the widget extension, where any SwiftData fetch traps.
+/// See `WidgetSnapshot`.
 struct ProjectEntityQuery: EntityQuery {
     /// Resolves previously-selected projects by id when the configuration is restored.
-    @MainActor
     func entities(for identifiers: [UUID]) async throws -> [ProjectEntity] {
         let wanted = Set(identifiers)
-        return try allProjects().filter { wanted.contains($0.id) }
+        return allProjects().filter { wanted.contains($0.id) }
     }
 
     /// Offers every project as a suggestion in the picker.
-    @MainActor
     func suggestedEntities() async throws -> [ProjectEntity] {
-        try allProjects()
+        allProjects()
     }
 
-    /// Fetches all projects from the shared store, sorted by name.
-    @MainActor
-    private func allProjects() throws -> [ProjectEntity] {
-        let context = TaskFlowContainer.makeShared().mainContext
-        let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.name)])
-        return try context.fetch(descriptor).map { ProjectEntity(id: $0.id, name: $0.name) }
+    /// Every published project, sorted by name for a stable picker order.
+    private func allProjects() -> [ProjectEntity] {
+        WidgetSnapshotStore.read().projects
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            .map { ProjectEntity(id: $0.id, name: $0.name) }
     }
 }
 

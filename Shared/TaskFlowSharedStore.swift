@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import os.log
 
 /// Identifiers shared between the main app and the Widget extension.
 ///
@@ -26,9 +27,15 @@ enum TaskFlowContainer {
 
     /// Builds a `ModelContainer` backed by the App Group store.
     ///
-    /// - Returns: A container both processes agree on. Traps only on an
-    ///   unrecoverable store-creation error, matching the app's original behavior.
-    static func makeShared() -> ModelContainer {
+    /// Throws rather than trapping. The widget extension **must** be able to
+    /// handle failure: a `fatalError` there does not show an error, it kills the
+    /// extension, and WidgetKit then renders its placeholder skeleton forever
+    /// with no indication that anything went wrong. That is exactly what
+    /// happened on device on 2026-08-10.
+    ///
+    /// - Returns: A container both processes agree on.
+    /// - Throws: Whatever `ModelContainer` throws when the store cannot be opened.
+    static func makeShared() throws -> ModelContainer {
         let configuration: ModelConfiguration
         if let groupURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: AppGroup.identifier
@@ -37,14 +44,29 @@ enum TaskFlowContainer {
             configuration = ModelConfiguration(schema: schema, url: storeURL)
         } else {
             // App Group unavailable (e.g. entitlement missing): degrade to the
-            // default per-app store rather than crashing at launch.
+            // default per-app store rather than failing outright.
             configuration = ModelConfiguration(schema: schema)
         }
 
+        return try ModelContainer(for: schema, configurations: configuration)
+    }
+
+    /// The container for the main app, with an in-memory fallback.
+    ///
+    /// The app cannot run without a `ModelContainer`, but crashing at launch is
+    /// the worst way to report that: an in-memory store at least renders, and
+    /// the failure is logged rather than silent.
+    static func makeForApp() -> ModelContainer {
         do {
-            return try ModelContainer(for: schema, configurations: configuration)
+            return try makeShared()
         } catch {
-            fatalError("Failed to create shared ModelContainer: \(error)")
+            let message = String(describing: error)
+            Logger(subsystem: "com.eduardotorres.Task-Flow", category: "Store")
+                .fault("Shared store unavailable, falling back to memory: \(message, privacy: .public)")
+            let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            // If even an in-memory store cannot be built there is nothing left
+            // to degrade to.
+            return try! ModelContainer(for: schema, configurations: fallback)
         }
     }
 }
