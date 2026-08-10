@@ -87,15 +87,30 @@ import Observation
     /// `SFSpeechRecognizer.requestAuthorization` remains the authorization gate
     /// even for the modern stack: the permission is per-app, not per-API.
     func requestPermission() async {
-        authorizationStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                // The callback arrives on an arbitrary queue; dispatch back to main
-                // before resuming the continuation to satisfy @MainActor isolation.
-                DispatchQueue.main.async { continuation.resume(returning: status) }
-            }
-        }
+        authorizationStatus = await Self.requestSpeechAuthorization()
         _ = await AVAudioApplication.requestRecordPermission()
         await prepareOnDeviceModel()
+    }
+
+    /// Wraps `SFSpeechRecognizer.requestAuthorization` as an async call.
+    ///
+    /// **This must stay `nonisolated`.** A closure written inside a `@MainActor`
+    /// member inherits that isolation, so Swift emits an executor assertion when
+    /// the closure is entered. TCC invokes this completion handler on
+    /// `com.apple.root.default-qos`, the assertion fails, and the process traps
+    /// with SIGTRAP before the body runs — hopping to the main queue *inside*
+    /// the closure is too late to help, because entry is what asserts.
+    /// Declaring the wrapper `nonisolated` gives the closure no isolation to
+    /// check. The result is assigned back on the main actor by the caller,
+    /// after the await.
+    ///
+    /// Do not inline this back into `requestPermission()`.
+    private nonisolated static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
     }
 
     /// Installs the current locale's transcription model if needed, and updates
@@ -184,10 +199,13 @@ import Observation
         )
         let converter = analysisFormat.flatMap { AVAudioConverter(from: inputFormat, to: $0) }
 
-        // Capture only Sendable values in the tap: the continuation, the
-        // converter, and the target format. Capturing `self` would cross actor
-        // boundaries from an audio thread, which Swift 6 rejects.
-        // Deprecated in iOS 27 in favour of the throwing
+        // The tap block is built by a nonisolated factory for the same reason
+        // `requestSpeechAuthorization` is nonisolated: a closure written inline
+        // here would inherit this method's @MainActor isolation, and
+        // AVAudioEngine calls the tap on its own realtime audio thread, so the
+        // executor assertion on entry would trap. See makeTapBlock.
+        //
+        // installTap is deprecated in iOS 27 in favour of the throwing
         // `installTapOnBus:bufferSize:format:error:block:`. That replacement is
         // declared NS_REFINED_FOR_SWIFT and the AVFAudio overlay in Xcode 27
         // beta (27A5228h) ships no wrapper for it, so the only spelling
@@ -195,10 +213,16 @@ import Observation
         // `__installTap(...)`, which is not API worth depending on. Revisit when
         // a later beta exposes the throwing form; the warning is expected until
         // then.
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
-            guard let converted = Self.convert(buffer, using: converter, to: analysisFormat) else { return }
-            continuation.yield(AnalyzerInput(buffer: converted))
-        }
+        inputNode.installTap(
+            onBus: 0,
+            bufferSize: 4096,
+            format: inputFormat,
+            block: Self.makeTapBlock(
+                converter: converter,
+                format: analysisFormat,
+                continuation: continuation
+            )
+        )
 
         let speechAnalyzer = SpeechAnalyzer(modules: [module])
         analyzer = speechAnalyzer
@@ -259,6 +283,31 @@ import Observation
         isListening = false
         // Deactivate the audio session so other apps (e.g. Music) can resume their audio.
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    // MARK: - Audio Tap
+
+    /// Builds the microphone tap block.
+    ///
+    /// **This must stay `nonisolated`.** `AVAudioNodeTapBlock` is declared
+    /// `NS_SWIFT_NONSENDABLE`, so a closure written inline in a `@MainActor`
+    /// method inherits main-actor isolation and asserts its executor on entry.
+    /// AVAudioEngine calls the tap on a realtime audio thread, so that
+    /// assertion fails and traps. Building it here, with no isolation to
+    /// inherit, is what makes the tap safe to call from that thread.
+    ///
+    /// Everything captured is `Sendable`: the converter and format are
+    /// immutable, and `AsyncStream.Continuation` is explicitly `Sendable`.
+    /// Never capture `self` here.
+    private nonisolated static func makeTapBlock(
+        converter: AVAudioConverter?,
+        format: AVAudioFormat?,
+        continuation: AsyncStream<AnalyzerInput>.Continuation
+    ) -> AVAudioNodeTapBlock {
+        { buffer, _ in
+            guard let converted = convert(buffer, using: converter, to: format) else { return }
+            continuation.yield(AnalyzerInput(buffer: converted))
+        }
     }
 
     // MARK: - Audio Conversion

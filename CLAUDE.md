@@ -122,6 +122,42 @@ MVVM with Swift 6 `@Observable` ViewModels (no `ObservableObject` / `@Published`
 - SF Symbol names stored as `String` in `Project.symbolName`.
 - `Task` (the SwiftData model) shadows `Swift.Task` module-wide. Write `Swift.Task { }` for concurrency. For the same reason, never name a module-level type after a stdlib generic (`TaskGroup` is `DatedTaskGroup`).
 
+### Completion handlers inside `@MainActor` types will crash on device
+
+A closure written inside a `@MainActor` class inherits main-actor isolation, and
+Swift 6 emits an executor assertion **on entry** to it. When a framework invokes
+that closure from its own queue or thread, the assertion fails and the process
+dies with `SIGTRAP` — no catchable error, no message in the UI, the app just
+closes.
+
+Two instances were hit in `VoiceTaskService` on 2026-08-10:
+`SFSpeechRecognizer.requestAuthorization` (TCC calls back on
+`com.apple.root.default-qos`) and the `AVAudioNodeTapBlock` (AVAudioEngine calls
+it on a realtime audio thread). Both are now produced by `nonisolated static`
+factory methods, which is what leaves the closure with no isolation to assert.
+
+Notes that matter when this recurs:
+
+- Hopping to the main queue *inside* the closure does not help. Entry is what
+  asserts, so the first line never runs. The old code did exactly this and
+  carried a comment claiming it worked.
+- **The simulator does not reproduce it.** TCC calls back on the main queue
+  there, so the assertion passes. Only a physical device catches these.
+- `SIGTRAP` (signal 5) is a Swift runtime trap — isolation, force-unwrap,
+  precondition. `SIGABRT` (signal 6) is an ObjC exception, e.g. an AVAudioEngine
+  format mismatch. Check which one before forming a theory.
+
+Pull the report rather than guessing:
+
+```bash
+xcrun devicectl device info files --device $DEV --domain-type systemCrashLogs | grep Task-Flow
+xcrun devicectl device copy from --device $DEV --domain-type systemCrashLogs \
+  --source <name>.ips --destination /tmp/crash.ips
+```
+
+The `.ips` is a one-line header followed by JSON; `usedImages` plus the faulting
+thread's `frames` give a readable backtrace.
+
 ## On-device intelligence
 
 Read `PRIVACY.md` first. The short version: no network, ever, and both AI paths
@@ -156,6 +192,9 @@ already saved, so a model failure can never lose the user's input.
 `requiresOnDeviceRecognition`; the new one has no server path at all. When the
 locale's model is not installed, `isOnDeviceReady` is false and the mic button
 is disabled with an explanation.
+
+Verified end to end on the iPhone 17 Pro Max (iOS 27 beta) on 2026-08-10:
+permission prompt, model install, live transcription into the input bar.
 
 > **Dictation cannot be tested in the simulator.** On the iOS 27 simulator
 > `SpeechTranscriber.supportedLocales` is empty and
