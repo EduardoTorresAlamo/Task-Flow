@@ -24,33 +24,57 @@ struct VoiceInputButton: View {
 
     var body: some View {
         Button {
-            if voiceService.isListening {
-                // Capture transcript before stopping, because stopListening() clears it.
-                let final = voiceService.transcript
-                voiceService.stopListening()
-                if !final.isEmpty { onTranscript(final) }
-            } else {
-                if voiceService.authorizationStatus == .notDetermined {
-                    // First-time use: request permissions asynchronously before
-                    // starting recording so the OS alert is shown to the user.
-                    Swift.Task { await voiceService.requestPermission() }
+            Swift.Task {
+                if voiceService.isListening {
+                    // Stop first so the analyzer can flush its last volatile
+                    // segment, then read the settled transcript.
+                    await voiceService.stopListening()
+                    let final = voiceService.transcript
+                    if !final.isEmpty { onTranscript(final) }
+                } else if voiceService.authorizationStatus == .notDetermined {
+                    // First-time use: request permission and install the
+                    // on-device model, then start in the same action so the
+                    // user does not have to tap the mic a second time.
+                    await voiceService.requestPermission()
+                    if voiceService.authorizationStatus == .authorized, voiceService.isOnDeviceReady {
+                        try? await voiceService.startListening()
+                    }
                 } else if voiceService.authorizationStatus == .authorized {
-                    // Permission already granted; start immediately.
-                    // Errors (e.g. audio session conflict) are silently swallowed here;
-                    // a production app should surface them to the user.
-                    try? voiceService.startListening()
+                    // Errors (e.g. an audio session conflict) are swallowed here;
+                    // the button simply stays in its non-listening state.
+                    try? await voiceService.startListening()
                 }
-                // .denied / .restricted states are intentionally ignored: the button
-                // appears disabled by remaining in the non-listening visual state.
+                // .denied / .restricted are intentionally ignored: the button is
+                // disabled in those states and explains itself via its label.
             }
         } label: {
-            Image(systemName: voiceService.isListening ? "waveform.circle.fill" : "mic.circle")
-                .font(.title3)
-                .foregroundStyle(voiceService.isListening ? Color(hex: "#6E56CF") : .secondary)
+            Image(systemName: voiceService.isListening ? "waveform" : "mic")
+                .font(.system(size: 17))
+                .foregroundStyle(iconColor)
                 // .pulse effect provides a subtle visual heartbeat while audio is being captured,
                 // giving the user clear feedback that recording is active.
                 .symbolEffect(.pulse, isActive: voiceService.isListening)
         }
         .buttonStyle(.plain)
+        // Disabled rather than silently failing when the locale has no
+        // on-device speech model: the alternative the framework offers is
+        // server-side recognition, which this app does not use.
+        .disabled(isDisabled)
+        .help(voiceService.unavailableReason ?? "Dictate a task")
+        .accessibilityLabel(voiceService.unavailableReason ?? "Dictate a task")
+    }
+
+    /// The mic is unavailable whenever dictation could not run locally. The
+    /// not-determined case stays enabled, because tapping it is what triggers
+    /// the permission prompt.
+    private var isDisabled: Bool {
+        if voiceService.authorizationStatus == .notDetermined { return false }
+        if voiceService.isInstallingModel { return true }
+        return !voiceService.isOnDeviceReady || voiceService.authorizationStatus != .authorized
+    }
+
+    private var iconColor: Color {
+        if voiceService.isListening { return Theme.accent }
+        return isDisabled ? Theme.textTertiary : Theme.textSecondary
     }
 }

@@ -32,11 +32,11 @@
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Task Flow syncs your tasks with Calendar so you can see them alongside your events.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Task Flow uses your microphone to capture voice-dictated tasks.</string>
+	<string>Task Flow uses your microphone to capture voice-dictated tasks. Audio is transcribed on this device and is never uploaded.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>Task Flow syncs your tasks with Reminders so you can manage them in one place.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Task Flow uses speech recognition to convert your voice into task text.</string>
+	<string>Task Flow transcribes your voice entirely on this device using Apple's on-device speech model. Your audio is never sent to a server.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

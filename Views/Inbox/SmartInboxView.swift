@@ -3,9 +3,10 @@ import SwiftData
 
 /// The primary inbox screen showing all active (non-completed) tasks.
 ///
-/// Displays a natural-language input bar at the top for quick task entry
-/// and a scrollable list of task rows below. Tapping a row opens `TaskEditView`
-/// as a sheet.
+/// Displays a large title with a live pending count, a natural-language input
+/// bar for quick task entry, and the task list grouped into dated sections
+/// (Overdue / Today / Tomorrow / Later / Someday). Tapping a row opens
+/// `TaskEditView` as a sheet.
 ///
 /// `InboxViewModel` is created lazily on first appear so it can receive a
 /// valid `ModelContext` from the SwiftUI environment, which is only available
@@ -25,7 +26,8 @@ struct SmartInboxView: View {
     ///
     /// `@Query` hooks directly into SwiftData's change notifications, so the
     /// list updates automatically whenever a task is inserted, deleted, or
-    /// has its `isCompleted` property toggled.
+    /// has its `isCompleted` property toggled. The sort here only establishes
+    /// a stable base order; `groupTasksBySection` re-sorts within each section.
     @Query(filter: #Predicate<Task> { !$0.isCompleted }, sort: \Task.createdAt, order: .reverse)
     private var tasks: [Task]
 
@@ -37,54 +39,39 @@ struct SmartInboxView: View {
     /// `TaskEditView` as a sheet.
     @State private var selectedTask: Task?
 
+    /// The tasks split into their dated sections, recomputed on every render so
+    /// the grouping stays correct as the day rolls over.
+    private var groups: [DatedTaskGroup] { groupTasksBySection(tasks) }
+
+    /// The status line under the title.
+    private var subtitle: String {
+        tasks.count == 1 ? "1 task pending" : "\(tasks.count) tasks pending"
+    }
+
     var body: some View {
         ZStack {
             // Full-bleed black background matches the dark-mode-first design.
-            Color.black.ignoresSafeArea()
+            Theme.background.ignoresSafeArea()
 
-            VStack(spacing: 12) {
+            VStack(spacing: 0) {
+                ScreenHeader(title: "Inbox", subtitle: subtitle, showsWave: true)
+
                 // Only render the input bar once the view model is available.
                 if let vm = viewModel {
                     NaturalLanguageInputBar(viewModel: vm)
+                        .padding(.bottom, 16)
                 }
 
                 if tasks.isEmpty {
                     Spacer()
-                    VStack(spacing: 8) {
-                        Image(systemName: "tray")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("All clear")
-                            .foregroundStyle(.secondary)
-                    }
+                    emptyState
                     Spacer()
                 } else {
-                    ScrollView {
-                        // LazyVStack defers row rendering until each row scrolls
-                        // into the visible viewport, keeping memory usage low for
-                        // large task lists.
-                        LazyVStack(spacing: 8) {
-                            ForEach(tasks) { task in
-                                TaskRowView(
-                                    task: task,
-                                    onTap: { selectedTask = task },
-                                    onToggleComplete: {
-                                        // Route completion through the view model so a
-                                        // recurring task spawns its next occurrence.
-                                        if let vm = viewModel {
-                                            Swift.Task { await vm.toggleCompletion(task) }
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
+                    taskList
                 }
             }
             .padding(.top, 8)
         }
-        .navigationTitle("Inbox")
         .preferredColorScheme(.dark)
         .onAppear {
             // Create the view model on first appear to ensure modelContext is valid.
@@ -104,6 +91,60 @@ struct SmartInboxView: View {
                     modelContext.delete(task)
                 }
             }
+        }
+    }
+
+    // MARK: - Pieces
+
+    /// The grouped, scrolling task list.
+    private var taskList: some View {
+        ScrollView {
+            // LazyVStack defers row rendering until each row scrolls
+            // into the visible viewport, keeping memory usage low for
+            // large task lists.
+            LazyVStack(alignment: .leading, spacing: Theme.sectionGap) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionHeader(text: group.section.label)
+
+                        VStack(spacing: Theme.rowGap) {
+                            ForEach(group.tasks) { task in
+                                TaskRowView(
+                                    task: task,
+                                    showsTimeOnly: group.section.showsTimeOnly,
+                                    isCataloging: viewModel?.catalogingTaskIDs.contains(task.id) ?? false,
+                                    onTap: { selectedTask = task },
+                                    onToggleComplete: {
+                                        // Route completion through the view model so a
+                                        // recurring task spawns its next occurrence.
+                                        if let vm = viewModel {
+                                            Swift.Task { await vm.toggleCompletion(task) }
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.contentInset)
+            .padding(.bottom, 24)
+            // Section membership changes when a task's due date is edited;
+            // animating on the group shape keeps rows from jumping between
+            // headings without a transition.
+            .animation(.easeInOut(duration: 0.22), value: groups.map(\.id))
+        }
+    }
+
+    /// Shown when nothing is pending.
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(Theme.textTertiary)
+            Text("All clear")
+                .font(.tfRowTitle)
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 }

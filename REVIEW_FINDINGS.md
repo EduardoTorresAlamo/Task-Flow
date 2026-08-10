@@ -10,6 +10,24 @@ General health-check review. Build verified with `xcodebuild -scheme Task-Flow` 
 4. **App/TaskFlowApp.swift (`init`)** — `EventKitService.checkExistingAuthorization()` was dead code despite its doc saying "Call this at launch". Authorization flags were therefore always `false` at service construction, making `CalendarManager.init`'s eager `refreshCalendars()` branch unreachable. Now called right after `EventKitService()` is created (synchronous, no prompt).
 5. **Services/CalendarManager.swift (`syncTask`)** — Every commit/save synced the task even with no due date; `CalendarSyncService.sync` falls back to `Date()`, so undated tasks ("buy milk") created phantom 1-hour calendar events starting "now". Added `guard task.dueDate != nil`, mirroring the eligibility rule `syncAllTasks` already applies.
 
+## Resolved by the Nocturne redesign (Aug 2026)
+
+The redesign rewrote `TaskEditView`, `SmartInboxView`, and `CompletedTasksView`
+outright, which closed several flagged items below:
+
+- **#5 (Cancel does not revert)** — `TaskEditView` now stages every field in local
+  drafts and only writes to the model in `save()`, so Cancel genuinely discards.
+- **#6 (clearing a due date orphans the calendar event)** — `save()` calls
+  `removeSync(for:)` when the due date went from set to `nil`, and `syncTask`
+  otherwise.
+- **#7 (`.navigationTitle("Inbox")` had no effect)** — the screens use the
+  design's own `ScreenHeader` instead of a navigation bar title.
+- **#8 (iOS 19 vs iOS 18.0 mismatch)** — `CLAUDE.md` now states iOS 18.0, matching
+  `project.yml`.
+- **#9 (references to a non-existent test target)** — `CLAUDE.md` no longer shows
+  test commands and says outright that no test target exists. The gap itself is
+  still open.
+
 ## Flagged for human review (not changed)
 
 1. **Models/Task.swift:52-62 — self-referential relationship has no explicit inverse.** `subtasks` (`.cascade`) and `parentTask` are declared as separate properties with no `inverse:`; SwiftData may treat them as two independent relationships rather than one bidirectional pair. Recommended: `@Relationship(deleteRule: .cascade, inverse: \Task.parentTask) var subtasks: [Task]`. Schema change — out of scope per review constraints.

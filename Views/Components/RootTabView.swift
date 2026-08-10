@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The root navigation container for Task-Flow.
 ///
-/// Presents the two top-level tabs (Inbox and Done) and triggers the
+/// Presents the three top-level tabs (Inbox, Projects, Done) and triggers the
 /// EventKit permission request on first appearance so the prompt is shown
 /// as early as possible in the user session.
 ///
@@ -19,11 +19,13 @@ struct RootTabView: View {
         TabView {
             SmartInboxView()
                 .tabItem { Label("Inbox", systemImage: "tray") }
+            ProjectsView()
+                .tabItem { Label("Projects", systemImage: "square.grid.2x2") }
             CompletedTasksView()
                 .tabItem { Label("Done", systemImage: "checkmark.circle") }
         }
         // App-wide accent color applied to all interactive controls.
-        .tint(Color(hex: "#6E56CF"))
+        .tint(Theme.accent)
         // Force dark appearance throughout; the design uses pure black backgrounds.
         .preferredColorScheme(.dark)
         // Request EventKit access as soon as the root view appears.

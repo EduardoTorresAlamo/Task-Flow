@@ -35,14 +35,38 @@ import Observation
     /// The calendar manager used to sync newly committed tasks to EventKit.
     private let calendarManager: CalendarManager
 
+    /// The on-device model that files new tasks into projects and tags them.
+    private let intelligence: TaskIntelligenceService
+
+    /// IDs of tasks currently being catalogued by Apple Intelligence.
+    ///
+    /// The Inbox reads this to show a cataloging indicator on the affected row.
+    /// Keyed by `Task.id` rather than holding the model object, because a task
+    /// can be deleted while its catalog request is still in flight.
+    private(set) var catalogingTaskIDs: Set<UUID> = []
+
+    /// The most recent cataloging failure, for display in the Inbox.
+    ///
+    /// Cataloging is an enhancement, never a gate on saving a task, so failures
+    /// are surfaced quietly here instead of being thrown at the caller.
+    var catalogError: String?
+
     /// Creates the view model with the required dependencies.
     ///
     /// - Parameters:
     ///   - modelContext: The SwiftData context for inserting new tasks.
     ///   - calendarManager: The manager that syncs tasks to the system Calendar.
-    init(modelContext: ModelContext, calendarManager: CalendarManager) {
+    ///   - intelligence: The on-device cataloging service. Defaulted because it
+    ///     is stateless and holds no configuration; the parameter exists so a
+    ///     test can substitute one.
+    init(
+        modelContext: ModelContext,
+        calendarManager: CalendarManager,
+        intelligence: TaskIntelligenceService = TaskIntelligenceService()
+    ) {
         self.modelContext = modelContext
         self.calendarManager = calendarManager
+        self.intelligence = intelligence
     }
 
     /// Re-parses `inputText` and updates `parsedPreview`.
@@ -64,6 +88,7 @@ import Observation
     /// keywords that the parser strips out).
     func commitTask() async {
         guard let parsed = parsedPreview, !parsed.title.isEmpty else { return }
+        let rawInput = inputText
         let task = Task(title: parsed.title, dueDate: parsed.dueDate, priority: parsed.priority, notes: parsed.notes)
         // Carry any detected recurrence onto the task, mirroring the rule's own
         // endDate onto recurrenceEnd so the task-level cutoff stays in sync.
@@ -79,6 +104,74 @@ import Observation
         // Sync to EventKit asynchronously so the UI is not blocked waiting for
         // the calendar store write.
         await calendarManager.syncTask(task)
+        // Cataloging runs after the task is already saved and on screen. It is
+        // an enhancement to a task that already exists, so it must never delay
+        // the task appearing, and its failure must never lose the user's input.
+        await catalog(task, rawInput: rawInput)
+    }
+
+    /// Files a freshly created task into a project, tags it, and tidies its
+    /// title and priority using the on-device model.
+    ///
+    /// The natural-language parser stays authoritative for the due date and
+    /// recurrence: those are deterministic, work with no model present, and are
+    /// the fields a wrong answer would hurt most. The model owns only the
+    /// fields it is actually better at.
+    ///
+    /// - Parameters:
+    ///   - task: The already-inserted task to enrich.
+    ///   - rawInput: What the user originally typed, before the parser stripped
+    ///     date and priority words out of it. The model reads better signal from
+    ///     the original phrasing than from the reduced title.
+    private func catalog(_ task: Task, rawInput: String) async {
+        guard intelligence.isReady else { return }
+
+        let taskID = task.id
+        catalogingTaskIDs.insert(taskID)
+        defer { catalogingTaskIDs.remove(taskID) }
+
+        let projects = (try? modelContext.fetch(FetchDescriptor<Project>())) ?? []
+
+        do {
+            let result = try await intelligence.catalog(
+                text: rawInput,
+                projectNames: projects.map(\.name)
+            )
+
+            // The task may have been deleted or edited while the model ran.
+            // `isDeleted` is the documented way to ask a SwiftData model whether
+            // its row still exists; touching a deleted model would trap.
+            guard !task.isDeleted else { return }
+
+            // Take the model's title whenever it produced one. There is
+            // deliberately no "only if shorter" test: `TaskIntelligenceService`
+            // already rejects a title that is not a rewrite of the user's own
+            // words, and a length check on top of that rejects good rewrites
+            // for being long — "remind me to maybe call the dentist" stayed as
+            // "maybe call the dentist" rather than becoming the model's
+            // "Call dentist about insurance", which is the entire feature.
+            if !result.title.isEmpty {
+                task.title = result.title
+            }
+            // Never downgrade a priority the parser read explicitly from the
+            // text ("urgent" should not become None because the model disagreed).
+            if task.priority == .none {
+                task.priority = result.priority
+            }
+            if task.project == nil, let name = result.projectName {
+                task.project = projects.first { $0.name == name }
+            }
+            TagStore.apply(result.tags, to: task, in: modelContext)
+            task.updatedAt = Date()
+            catalogError = nil
+        } catch let error as TaskIntelligenceError {
+            switch error {
+            case .modelNotReady(let reason), .malformedResponse(let reason):
+                catalogError = reason
+            }
+        } catch {
+            catalogError = "Apple Intelligence could not catalog this task."
+        }
     }
 
     /// Toggles a task's completion state, applying recurrence rules on completion.

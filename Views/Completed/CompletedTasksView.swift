@@ -3,10 +3,10 @@ import SwiftData
 
 /// A screen listing all tasks the user has marked as completed.
 ///
-/// Each row shows a "restore" button that un-completes the task and returns it
-/// to the inbox, the task title with strikethrough, and the completion timestamp.
-/// Tapping a row opens `TaskEditView` so the user can re-schedule or delete
-/// the task permanently.
+/// Rows are grouped into "This Week" and "Earlier". Each row shows a restore
+/// button that un-completes the task and returns it to the inbox, the task
+/// title with strikethrough, and the completion timestamp. Tapping a row opens
+/// `TaskEditView` so the user can re-schedule or delete the task permanently.
 struct CompletedTasksView: View {
     /// SwiftData context used to delete tasks permanently.
     @Environment(\.modelContext) private var modelContext
@@ -25,64 +25,27 @@ struct CompletedTasksView: View {
     /// The task currently selected for editing via the sheet.
     @State private var selectedTask: Task?
 
+    /// The completed tasks split into their time windows.
+    private var groups: [CompletedGroup] { groupCompletedTasks(tasks) }
+
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Color.black.ignoresSafeArea()
+        ZStack {
+            Theme.background.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                ScreenHeader(title: "Done")
+
                 if tasks.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle")
-                            .font(.largeTitle)
-                            .foregroundStyle(.secondary)
-                        Text("Nothing completed yet")
-                            .foregroundStyle(.secondary)
-                    }
+                    Spacer()
+                    emptyState
+                    Spacer()
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 8) {
-                            ForEach(tasks) { task in
-                                GlassCard {
-                                    HStack(spacing: 12) {
-                                        // Restore button: flips isCompleted back to false
-                                        // and clears the completion timestamp so the task
-                                        // re-appears in the inbox @Query result.
-                                        Button {
-                                            task.isCompleted = false
-                                            task.completedAt = nil
-                                            task.updatedAt = Date()
-                                        } label: {
-                                            Image(systemName: "arrow.uturn.backward.circle")
-                                                .font(.title3)
-                                                .foregroundStyle(Color(hex: "#6E56CF"))
-                                        }
-                                        .buttonStyle(.plain)
-
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(task.title)
-                                                .strikethrough(true, color: .secondary)
-                                                .foregroundStyle(.white)
-                                            if let completedAt = task.completedAt {
-                                                Text("Completed \(completedAt.formatted(date: .abbreviated, time: .shortened))")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-
-                                        Spacer()
-                                        PriorityBadge(priority: task.priority)
-                                    }
-                                }
-                                // Tap on the card body (not the restore button) opens the edit sheet.
-                                .onTapGesture { selectedTask = task }
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
+                    completedList
                 }
             }
-            .navigationTitle("Done")
-            .preferredColorScheme(.dark)
+            .padding(.top, 8)
         }
+        .preferredColorScheme(.dark)
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
                 // Remove the EventKit event first, then delete the task inside the
@@ -93,6 +56,79 @@ struct CompletedTasksView: View {
                     modelContext.delete(task)
                 }
             }
+        }
+    }
+
+    // MARK: - Pieces
+
+    private var completedList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: Theme.sectionGap) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 0) {
+                        SectionHeader(text: group.section.label)
+
+                        VStack(spacing: Theme.rowGap) {
+                            ForEach(group.tasks) { task in
+                                completedRow(task)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, Theme.contentInset)
+            .padding(.bottom, 24)
+        }
+    }
+
+    /// One archived task: restore control, struck-through title, and the
+    /// moment it was completed.
+    private func completedRow(_ task: Task) -> some View {
+        GlassCard {
+            HStack(spacing: 12) {
+                // Restore button: flips isCompleted back to false
+                // and clears the completion timestamp so the task
+                // re-appears in the inbox @Query result.
+                Button {
+                    task.isCompleted = false
+                    task.completedAt = nil
+                    task.updatedAt = Date()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title)
+                        .font(.tfRowTitle)
+                        .strikethrough(true, color: Theme.textTertiary)
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(2)
+                    if let completedAt = task.completedAt {
+                        Text(completedAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.tfMeta)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+
+                Spacer(minLength: 4)
+                PriorityBadge(priority: task.priority)
+            }
+        }
+        // Tap on the card body (not the restore button) opens the edit sheet.
+        .onTapGesture { selectedTask = task }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(Theme.textTertiary)
+            Text("Nothing completed yet")
+                .font(.tfRowTitle)
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 }

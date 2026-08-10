@@ -16,22 +16,39 @@ struct TaskSnapshot: Identifiable, Hashable {
     let projectColorHex: String?
 }
 
+/// A per-project pending count, shown in the extra-large family's footer strip.
+struct ProjectSummary: Identifiable, Hashable {
+    let id: UUID
+    let name: String
+    let colorHex: String
+    /// Pending (non-completed) tasks in this project, across all dates.
+    let count: Int
+}
+
 /// One timeline entry: the tasks to show at a given render time.
 struct TodayTasksEntry: TimelineEntry {
     let date: Date
     let tasks: [TaskSnapshot]
     /// Name of the filtered project, or `nil` when showing all projects.
     let projectName: String?
+    /// Pending counts for the busiest projects. Only the extra-large family
+    /// renders these; smaller families ignore the field.
+    let projectSummaries: [ProjectSummary]
 
     /// Placeholder content shown in the widget gallery and while loading.
     static let placeholder = TodayTasksEntry(
         date: .now,
         tasks: [
-            TaskSnapshot(id: UUID(), title: "Review pull request", priority: .high, dueDate: .now, projectColorHex: "#6E56CF"),
-            TaskSnapshot(id: UUID(), title: "Reply to design feedback", priority: .medium, dueDate: .now, projectColorHex: "#22C55E"),
-            TaskSnapshot(id: UUID(), title: "Book flights", priority: .low, dueDate: .now, projectColorHex: "#F59E0B")
+            TaskSnapshot(id: UUID(), title: "Call Dentist", priority: .medium, dueDate: .now, projectColorHex: "#9184D9"),
+            TaskSnapshot(id: UUID(), title: "Team Standup", priority: .none, dueDate: .now, projectColorHex: "#9184D9"),
+            TaskSnapshot(id: UUID(), title: "Review Q3 Budget", priority: .high, dueDate: .now, projectColorHex: "#4D8FE0")
         ],
-        projectName: nil
+        projectName: nil,
+        projectSummaries: [
+            ProjectSummary(id: UUID(), name: "Personal", colorHex: "#9184D9", count: 4),
+            ProjectSummary(id: UUID(), name: "Work", colorHex: "#4D8FE0", count: 7),
+            ProjectSummary(id: UUID(), name: "Home", colorHex: "#5FBF8F", count: 2)
+        ]
     )
 }
 
@@ -106,8 +123,33 @@ struct TodayTasksProvider: AppIntentTimelineProvider {
         return TodayTasksEntry(
             date: .now,
             tasks: Array(snapshots),
-            projectName: configuration.project?.name
+            projectName: configuration.project?.name,
+            projectSummaries: projectSummaries(in: context)
         )
+    }
+
+    /// The three busiest projects by pending task count.
+    ///
+    /// Deliberately not restricted to today's window: the footer strip answers
+    /// "where is my outstanding work" rather than "what is due in the next few
+    /// hours", which the rows above it already cover.
+    @MainActor
+    private func projectSummaries(in context: ModelContext) -> [ProjectSummary] {
+        let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)])
+        let projects = (try? context.fetch(descriptor)) ?? []
+        return projects
+            .map { project in
+                ProjectSummary(
+                    id: project.id,
+                    name: project.name,
+                    colorHex: project.colorHex,
+                    count: project.tasks.filter { !$0.isCompleted }.count
+                )
+            }
+            .filter { $0.count > 0 }
+            .sorted { $0.count > $1.count }
+            .prefix(3)
+            .map { $0 }
     }
 }
 
@@ -122,10 +164,21 @@ struct TodayTasksWidget: Widget {
             provider: TodayTasksProvider()
         ) { entry in
             TodayTasksWidgetView(entry: entry)
-                .containerBackground(.black.gradient, for: .widget)
+                // The wave ground is a full view rather than a color so the
+                // radial blooms can be sized against the widget's own bounds.
+                // Accessory (Lock Screen) families composite as a monochrome
+                // vibrant layer, so they are given no background at all.
+                .containerBackground(for: .widget) { WidgetWaveBackground() }
         }
         .configurationDisplayName("Today's Tasks")
         .description("Your pending tasks for today, sorted by priority.")
-        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+        .supportedFamilies([
+            .systemSmall, .systemMedium, .systemLarge,
+            // Both extra-large families: the landscape one (iPad, iOS 15+) and
+            // systemExtraLargePortrait, added in iOS 27. The deployment target
+            // is iOS 27, so neither needs an availability check.
+            .systemExtraLarge, .systemExtraLargePortrait,
+            .accessoryRectangular, .accessoryCircular
+        ])
     }
 }

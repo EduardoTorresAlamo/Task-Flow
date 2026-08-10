@@ -28,14 +28,24 @@ struct NaturalLanguageInputBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            GlassCard {
-                HStack {
+            // The input bar sits above the task list in the hierarchy, so it
+            // takes the larger barRadius and a slightly tighter inset than a
+            // task card.
+            GlassCard(cornerRadius: Theme.barRadius, padding: 14) {
+                HStack(spacing: 10) {
                     // Sparkles icon signals NL/AI-assisted input to the user.
                     Image(systemName: "sparkles")
-                        .foregroundStyle(Color(hex: "#6E56CF"))
-                    TextField("e.g. Meeting with Glen tomorrow at 2pm", text: $viewModel.inputText)
-                        .foregroundStyle(.white)
-                        .accentColor(Color(hex: "#6E56CF"))
+                        .font(.system(size: 16))
+                        .foregroundStyle(Theme.accent)
+                    TextField(
+                        "",
+                        text: $viewModel.inputText,
+                        prompt: Text("Call Glen tomorrow at 2pm")
+                            .foregroundColor(Theme.textTertiary)
+                    )
+                        .font(.system(size: 14.5))
+                        .foregroundStyle(Theme.text)
+                        .tint(Theme.accent)
                         .submitLabel(.done)
                         // Submitting the keyboard commits the task asynchronously.
                         // Swift.Task bridges the synchronous onSubmit closure into an async call.
@@ -55,12 +65,11 @@ struct NaturalLanguageInputBar: View {
             // The .transition modifier animates the pill in/out as the parsed date appears or disappears.
             if let date = viewModel.parsedPreview?.dueDate {
                 Text("Due: \(Self.dueDateFormatter.string(from: date))")
-                    .font(.caption)
-                    .fontWeight(.medium)
+                    .font(.tfBadge)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .background(Color(hex: "#6E56CF").opacity(0.8))
+                    .background(Theme.accent.opacity(0.8))
                     .clipShape(Capsule())
                     .padding(.leading, 4)
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -69,6 +78,6 @@ struct NaturalLanguageInputBar: View {
         // Animate the appearance/disappearance of the due-date pill
         // whenever the parsed date value changes.
         .animation(.easeInOut(duration: 0.2), value: viewModel.parsedPreview?.dueDate)
-        .padding(.horizontal)
+        .padding(.horizontal, Theme.contentInset)
     }
 }
