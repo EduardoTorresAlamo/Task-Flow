@@ -73,6 +73,16 @@ import SwiftData
     /// the count. Used to enforce `RecurrenceRule.maxOccurrences`.
     var recurrenceCount: Int = 1
 
+    /// The `id` of the successor occurrence this task spawned when it was
+    /// completed, or `nil` if it has spawned none.
+    ///
+    /// Completing a recurring task inserts its next occurrence. Without a link
+    /// back to that occurrence, un-completing the task cleared its own flags but
+    /// left the spawned occurrence in the store, so one recurring task became
+    /// two. Tracking the successor's id lets `InboxViewModel` remove exactly the
+    /// occurrence a completion created when that completion is undone.
+    var spawnedSuccessorID: UUID?
+
     /// The project this task belongs to, if any.
     ///
     /// `deleteRule: .nullify` means deleting a `Project` orphans the task

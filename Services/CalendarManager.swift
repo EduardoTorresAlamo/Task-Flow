@@ -79,12 +79,16 @@ final class CalendarManager {
 
     // MARK: - Computed Properties
 
-    /// `true` when both Calendar and Reminders access have been granted.
+    /// `true` when Calendar access has been granted.
     ///
-    /// Derived from `EventKitService` rather than stored locally so it always
-    /// reflects the current authorization status without a separate sync step.
+    /// Gated on Calendar access alone: every operation this flag guards
+    /// (syncing tasks to events, importing events, conflict detection) touches
+    /// only the Calendar entity. Requiring Reminders authorization too meant a
+    /// user who granted Calendar but declined Reminders got no calendar sync at
+    /// all. Derived from `EventKitService` rather than stored locally so it
+    /// always reflects the current authorization status.
     var isAuthorized: Bool {
-        eventKitService.calendarAuthorized && eventKitService.remindersAuthorized
+        eventKitService.calendarAuthorized
     }
 
     // MARK: - Initialiser

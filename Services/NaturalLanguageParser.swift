@@ -81,7 +81,12 @@ struct NaturalLanguageParser {
         // High-priority signals: words conveying immediate urgency.
         if lower.contains("urgent") || lower.contains("asap") || lower.contains("critical") { return .high }
         // Medium-priority signals: words conveying importance but not immediate crisis.
-        if lower.contains("important") || lower.contains("high priority") || lower.contains("must") || lower.contains("need to") { return .medium }
+        // "must" is matched on word boundaries so "mustard", "muster", etc. do
+        // not spuriously raise a task to medium priority. `contains` is fine for
+        // the multi-word phrases, which cannot be substrings of a single word.
+        if lower.contains("important") || lower.contains("high priority")
+            || lower.range(of: #"\bmust\b"#, options: .regularExpression) != nil
+            || lower.contains("need to") { return .medium }
         // Low-priority signals: words conveying deferred or optional work.
         if lower.contains("low priority") || lower.contains("whenever") || lower.contains("someday") || lower.contains("no rush") || lower.contains("eventually") { return .low }
         return .none

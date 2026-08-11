@@ -187,6 +187,7 @@ import Observation
             task.isCompleted = false
             task.completedAt = nil
             task.updatedAt = Date()
+            await removeSpawnedSuccessor(of: task)
             return
         }
         if task.isRecurring {
@@ -214,6 +215,30 @@ import Observation
 
         guard let next = task.makeNextOccurrence() else { return }
         modelContext.insert(next)
+        // Record the link so un-completing this task can remove the occurrence
+        // it just created instead of orphaning it as a duplicate.
+        task.spawnedSuccessorID = next.id
         await calendarManager.syncTask(next)
+    }
+
+    /// Removes the occurrence a recurring task spawned when it was completed.
+    ///
+    /// Completing a recurring task inserts its successor; un-completing has to
+    /// undo that, or the store keeps both the reopened task and the duplicate
+    /// next occurrence. The successor is only removed while it is still
+    /// pending — if the user has already completed it (spawning a further
+    /// occurrence of its own), it is history in its own right and is left alone.
+    ///
+    /// - Parameter task: The task being un-completed.
+    private func removeSpawnedSuccessor(of task: Task) async {
+        guard let successorID = task.spawnedSuccessorID else { return }
+        task.spawnedSuccessorID = nil
+
+        let descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.id == successorID })
+        guard let successor = try? modelContext.fetch(descriptor).first,
+              !successor.isCompleted else { return }
+
+        await calendarManager.removeSync(for: successor)
+        modelContext.delete(successor)
     }
 }
