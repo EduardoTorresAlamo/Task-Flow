@@ -78,19 +78,26 @@ struct NaturalLanguageParser {
     /// - Returns: The highest matching `Priority`, or `.none` if no keywords matched.
     private func extractPriority(from text: String) -> Priority {
         let lower = text.lowercased()
-        // High-priority signals: words conveying immediate urgency.
-        if lower.contains("urgent") || lower.contains("asap") || lower.contains("critical") { return .high }
-        // Medium-priority signals: words conveying importance but not immediate crisis.
-        // "must" is matched on word boundaries so "mustard", "muster", etc. do
-        // not spuriously raise a task to medium priority. `contains` is fine for
-        // the multi-word phrases, which cannot be substrings of a single word.
-        if lower.contains("important") || lower.contains("high priority")
-            || lower.range(of: #"\bmust\b"#, options: .regularExpression) != nil
-            || lower.contains("need to") { return .medium }
-        // Low-priority signals: words conveying deferred or optional work.
-        if lower.contains("low priority") || lower.contains("whenever") || lower.contains("someday") || lower.contains("no rush") || lower.contains("eventually") { return .low }
+        // Every keyword is matched on word boundaries via regex, never `contains`:
+        // a substring test fires "critical" on "critically", "must" on "mustard",
+        // and "someday" on "somedays". The patterns are compiled once as static
+        // properties (see `*PriorityPattern`) and checked in descending order so
+        // "urgent" wins over "important" when both appear.
+        if lower.range(of: Self.highPriorityPattern, options: .regularExpression) != nil { return .high }
+        if lower.range(of: Self.mediumPriorityPattern, options: .regularExpression) != nil { return .medium }
+        if lower.range(of: Self.lowPriorityPattern, options: .regularExpression) != nil { return .low }
         return .none
     }
+
+    /// Word-boundary regex patterns for each priority level, grouped so a single
+    /// `range(of:options:)` call tests every keyword at that level. Kept as
+    /// class-level `static let` so the pattern strings are declared once rather
+    /// than rebuilt on every parse. `\b` on both sides is what makes the match
+    /// whole-word: "no rush" matches "no rush" but "asap" does not match inside
+    /// a longer token.
+    private static let highPriorityPattern   = #"\b(?:urgent|asap|critical)\b"#
+    private static let mediumPriorityPattern = #"\b(?:important|high priority|must|need to)\b"#
+    private static let lowPriorityPattern    = #"\b(?:low priority|whenever|someday|no rush|eventually)\b"#
 
     /// Extracts supplementary notes text that follows a recognized connector word.
     ///
@@ -133,30 +140,44 @@ struct NaturalLanguageParser {
         // "every N days / weeks / months" -- numeric interval, checked first.
         if let rule = extractNumericInterval(from: lower, dueDate: dueDate) { return rule }
 
-        // A specific weekday, e.g. "every monday".
-        for day in Weekday.allCases where lower.contains("every \(day.label.lowercased())") {
+        // A specific weekday, e.g. "every monday". Word-boundary matched so
+        // "every sun" does not fire "sunday".
+        for day in Weekday.allCases where Self.containsWord("every \(day.label.lowercased())", in: lower) {
             return RecurrenceRule(frequency: .weekly(day: day))
         }
 
-        if lower.contains("every weekday") || lower.contains("weekdays") {
+        // Every keyword below is word-boundary matched via `containsWord`, never
+        // `contains`: a substring test fires "weekly" inside "biweekly" and
+        // "daily" inside "dailymotion". Order still runs most- to least-specific.
+        if Self.containsWord("every weekday", in: lower) || Self.containsWord("weekdays", in: lower) {
             return RecurrenceRule(frequency: .weekdays)
         }
-        if lower.contains("biweekly") || lower.contains("fortnight") || lower.contains("every other week") {
+        if Self.containsWord("biweekly", in: lower) || Self.containsWord("fortnight", in: lower) || Self.containsWord("every other week", in: lower) {
             return RecurrenceRule(frequency: .biweekly(day: anchorWeekday(dueDate)))
         }
-        if lower.contains("every day") || lower.contains("daily") || lower.contains("everyday") {
+        if Self.containsWord("every day", in: lower) || Self.containsWord("daily", in: lower) || Self.containsWord("everyday", in: lower) {
             return RecurrenceRule(frequency: .daily)
         }
-        if lower.contains("every week") || lower.contains("weekly") {
+        if Self.containsWord("every week", in: lower) || Self.containsWord("weekly", in: lower) {
             return RecurrenceRule(frequency: .weekly(day: anchorWeekday(dueDate)))
         }
-        if lower.contains("every month") || lower.contains("monthly") {
+        if Self.containsWord("every month", in: lower) || Self.containsWord("monthly", in: lower) {
             return RecurrenceRule(frequency: .monthly(day: anchorDayOfMonth(dueDate)))
         }
-        if lower.contains("every year") || lower.contains("yearly") || lower.contains("annually") {
+        if Self.containsWord("every year", in: lower) || Self.containsWord("yearly", in: lower) || Self.containsWord("annually", in: lower) {
             return RecurrenceRule(frequency: .yearly)
         }
         return nil
+    }
+
+    /// True when `keyword` occurs in `text` delimited by word boundaries,
+    /// case-insensitively. This is the whole-word counterpart of `contains`:
+    /// `containsWord("weekly", in: "biweekly")` is `false`. `keyword` is
+    /// regex-escaped so a phrase with metacharacters cannot alter the pattern,
+    /// mirroring `removingWholeWord`.
+    private static func containsWord(_ keyword: String, in text: String) -> Bool {
+        let pattern = "\\b" + NSRegularExpression.escapedPattern(for: keyword) + "\\b"
+        return text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// Parses an explicit numeric interval such as "every 2 days" or

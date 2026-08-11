@@ -225,20 +225,31 @@ import Observation
     ///
     /// Completing a recurring task inserts its successor; un-completing has to
     /// undo that, or the store keeps both the reopened task and the duplicate
-    /// next occurrence. The successor is only removed while it is still
-    /// pending — if the user has already completed it (spawning a further
-    /// occurrence of its own), it is history in its own right and is left alone.
+    /// next occurrence. A successor that the user has *already* completed spawned
+    /// a further occurrence of its own, so removing only pending successors would
+    /// still leave that descendant live alongside the reopened original — the
+    /// duplication this is meant to prevent. So the whole spawned chain is walked
+    /// and every occurrence in it is deleted, completed or not.
     ///
     /// - Parameter task: The task being un-completed.
     private func removeSpawnedSuccessor(of task: Task) async {
-        guard let successorID = task.spawnedSuccessorID else { return }
+        guard var successorID = task.spawnedSuccessorID else { return }
         task.spawnedSuccessorID = nil
 
-        let descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.id == successorID })
-        guard let successor = try? modelContext.fetch(descriptor).first,
-              !successor.isCompleted else { return }
+        // Follow `spawnedSuccessorID` down the chain, deleting each occurrence.
+        // Capturing the next id before deletion keeps the walk valid across the
+        // `modelContext.delete`.
+        while true {
+            let id = successorID
+            let descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.id == id })
+            guard let successor = try? modelContext.fetch(descriptor).first else { return }
+            let nextID = successor.spawnedSuccessorID
 
-        await calendarManager.removeSync(for: successor)
-        modelContext.delete(successor)
+            await calendarManager.removeSync(for: successor)
+            modelContext.delete(successor)
+
+            guard let nextID else { return }
+            successorID = nextID
+        }
     }
 }
