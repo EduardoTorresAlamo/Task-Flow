@@ -17,6 +17,10 @@ struct ProjectDetailView: View {
     /// The task currently open for editing.
     @State private var selectedTask: Task?
 
+    /// Lazily-created view model that owns completion logic. `Optional` because
+    /// `ModelContext` is only valid once the view has appeared.
+    @State private var viewModel: InboxViewModel?
+
     /// The project's pending tasks, grouped by due date.
     ///
     /// Read off the relationship rather than a `@Query` with a predicate:
@@ -61,6 +65,13 @@ struct ProjectDetailView: View {
         .toolbarBackground(Theme.background, for: .navigationBar)
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .onAppear {
+            // Create on first appear so modelContext is valid; guard against
+            // re-creation on re-appear.
+            if viewModel == nil {
+                viewModel = InboxViewModel(modelContext: modelContext, calendarManager: calendarManager)
+            }
+        }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
                 Swift.Task {
@@ -85,7 +96,14 @@ struct ProjectDetailView: View {
                                 TaskRowView(
                                     task: task,
                                     showsTimeOnly: group.section.showsTimeOnly,
-                                    onTap: { selectedTask = task }
+                                    onTap: { selectedTask = task },
+                                    onToggleComplete: {
+                                        // Route completion through the view model so a
+                                        // recurring task spawns its next occurrence.
+                                        if let viewModel {
+                                            Swift.Task { await viewModel.toggleCompletion(task) }
+                                        }
+                                    }
                                 )
                             }
                         }

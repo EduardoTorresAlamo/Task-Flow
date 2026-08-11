@@ -34,12 +34,20 @@ import Observation
     /// On denial or error both flags are set to `false` so callers can safely
     /// gate all store operations behind the authorization booleans.
     func requestPermissions() async {
+        // The two grants are independent: a Reminders denial must not clear the
+        // Calendar flag (or vice versa). Each request gets its own do-catch so a
+        // failure in one leaves the other's result intact.
         do {
             calendarAuthorized = try await store.requestFullAccessToEvents()
+        } catch {
+            // Calendar permission denied or an entitlement error occurred.
+            calendarAuthorized = false
+        }
+
+        do {
             remindersAuthorized = try await store.requestFullAccessToReminders()
         } catch {
-            // Permission denied or an entitlement error occurred.
-            calendarAuthorized = false
+            // Reminders permission denied or an entitlement error occurred.
             remindersAuthorized = false
         }
     }

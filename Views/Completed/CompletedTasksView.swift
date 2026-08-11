@@ -25,6 +25,10 @@ struct CompletedTasksView: View {
     /// The task currently selected for editing via the sheet.
     @State private var selectedTask: Task?
 
+    /// Lazily-created view model that owns completion/restore logic. `Optional`
+    /// because `ModelContext` is only valid once the view has appeared.
+    @State private var viewModel: InboxViewModel?
+
     /// The completed tasks split into their time windows.
     private var groups: [CompletedGroup] { groupCompletedTasks(tasks) }
 
@@ -46,6 +50,13 @@ struct CompletedTasksView: View {
             .padding(.top, 8)
         }
         .preferredColorScheme(.dark)
+        .onAppear {
+            // Create on first appear so modelContext is valid; guard against
+            // re-creation on re-appear.
+            if viewModel == nil {
+                viewModel = InboxViewModel(modelContext: modelContext, calendarManager: calendarManager)
+            }
+        }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
                 // Remove the EventKit event first, then delete the task inside the
@@ -86,13 +97,12 @@ struct CompletedTasksView: View {
     private func completedRow(_ task: Task) -> some View {
         GlassCard {
             HStack(spacing: 12) {
-                // Restore button: flips isCompleted back to false
-                // and clears the completion timestamp so the task
-                // re-appears in the inbox @Query result.
+                // Restore button: routes through the view model so restoring a
+                // recurring task also deletes the successor it spawned when it
+                // was completed, instead of leaving a duplicate behind.
                 Button {
-                    task.isCompleted = false
-                    task.completedAt = nil
-                    task.updatedAt = Date()
+                    guard let viewModel else { return }
+                    Swift.Task { await viewModel.toggleCompletion(task) }
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
                         .font(.system(size: 17, weight: .medium))
