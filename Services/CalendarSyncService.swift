@@ -1,5 +1,6 @@
 import EventKit
 import Observation
+import os.log
 
 /// Handles the low-level read/write of individual `EKEvent` records
 /// that mirror Task-Flow tasks in the system Calendar.
@@ -13,6 +14,10 @@ import Observation
 @Observable @MainActor final class CalendarSyncService {
     /// The EventKit facade used to access `EKEventStore`.
     private let eventKitService: EventKitService
+
+    /// Logger for calendar-sync failures. Records error *types* only — never a
+    /// task's title, notes, or any other user content (see PRIVACY.md).
+    private static let logger = Logger(subsystem: "com.eduardotorres.Task-Flow", category: "CalendarSync")
 
     /// Extracts structured metadata (location, attendees, URL, duration)
     /// from a task's text content using NaturalLanguage APIs.
@@ -49,7 +54,7 @@ import Observation
             ekEvent = existing
         } else {
             ekEvent = EKEvent(eventStore: store)
-            ekEvent.calendar = store.defaultCalendarForNewEvents
+            ekEvent.calendar = Self.targetCalendar(in: store)
         }
 
         // Populate the event fields from the task and its enriched metadata.
@@ -79,7 +84,10 @@ import Observation
             // Persist the stable identifier so we can re-find this event later.
             task.eventKitIdentifier = ekEvent.eventIdentifier
         } catch {
-            // Save failed -- eventKitIdentifier remains unchanged
+            // Save failed -- eventKitIdentifier remains unchanged so the next
+            // sync retries. Log the error type (no user content) instead of
+            // swallowing it silently, which previously hid write failures.
+            Self.logger.error("EKEventStore save failed: \(String(describing: type(of: error)), privacy: .public)")
         }
     }
 
@@ -101,8 +109,28 @@ import Observation
             try eventKitService.store.remove(ekEvent, span: .thisEvent)
             task.eventKitIdentifier = nil
         } catch {
-            // Removal failed -- identifier preserved so retry is possible
+            // Removal failed -- identifier preserved so retry is possible. Log
+            // the error type (no user content) rather than dropping it silently.
+            Self.logger.error("EKEventStore remove failed: \(String(describing: type(of: error)), privacy: .public)")
         }
+    }
+
+    /// The calendar a new task event should be created on.
+    ///
+    /// Honours the user's picked calendar (persisted by `CalendarManager` under
+    /// `selectedCalendarDefaultsKey`) when it still resolves to a real calendar,
+    /// and otherwise falls back to the system default for new events. Previously
+    /// the selection was ignored and every event landed on the default calendar.
+    ///
+    /// - Parameter store: The EventKit store to resolve the identifier against.
+    /// - Returns: The chosen calendar, or the store's default when no valid
+    ///   selection exists.
+    private static func targetCalendar(in store: EKEventStore) -> EKCalendar? {
+        if let identifier = UserDefaults.standard.string(forKey: CalendarManager.selectedCalendarDefaultsKey),
+           let selected = store.calendar(withIdentifier: identifier) {
+            return selected
+        }
+        return store.defaultCalendarForNewEvents
     }
 
     // MARK: - Recurrence Mapping

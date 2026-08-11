@@ -10,6 +10,10 @@ import SwiftData
 /// - Note: `final` is required by SwiftData for `@Model` classes; the macro
 ///   synthesises `PersistentModel` conformance which relies on known-final dispatch.
 @Model final class Task {
+    /// B-tree index on the EventKit link so sync lookups by identifier do not
+    /// scan the whole task table. See `eventKitIdentifier` for why it is not unique.
+    #Index<Task>([\.eventKitIdentifier])
+
     /// Stable unique identifier. Defaults to a new UUID at creation.
     var id: UUID = UUID()
 
@@ -43,6 +47,13 @@ import SwiftData
     /// The `EKEvent.eventIdentifier` of the calendar event that mirrors
     /// this task. `nil` when the task has not yet been synced to EventKit,
     /// or when the user has not granted calendar access.
+    ///
+    /// Indexed via the `#Index` macro below because it is the lookup key for
+    /// every sync round-trip: `CalendarSyncService` and `importCalendarEvents`
+    /// fetch by this value to find the task already linked to an event, and
+    /// without an index each such fetch is a full-table scan. Not `.unique` —
+    /// several tasks legitimately carry `nil` before their first sync, and a
+    /// unique constraint treats multiple nils as a collision.
     var eventKitIdentifier: String?
 
     /// The recurrence specification for this task, or `nil` for a one-off task.
@@ -72,7 +83,14 @@ import SwiftData
     ///
     /// `deleteRule: .cascade` ensures that deleting a parent task also
     /// removes all of its subtasks from the store, preventing orphan rows.
-    @Relationship(deleteRule: .cascade) var subtasks: [Task] = []
+    ///
+    /// `inverse: \Task.parentTask` pairs this collection with the
+    /// `parentTask` back-reference so SwiftData maintains a single
+    /// bidirectional relationship. Without the explicit inverse the macro
+    /// can infer two unrelated one-way links, which corrupts the graph
+    /// (a subtask appearing under the wrong parent, or cascade deletes
+    /// firing on the wrong rows).
+    @Relationship(deleteRule: .cascade, inverse: \Task.parentTask) var subtasks: [Task] = []
 
     /// The parent task when this instance is itself a subtask.
     /// `nil` for top-level tasks.

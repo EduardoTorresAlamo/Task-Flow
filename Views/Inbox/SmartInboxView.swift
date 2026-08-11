@@ -22,6 +22,10 @@ struct SmartInboxView: View {
     /// Shared calendar manager for syncing tasks after deletion.
     @Environment(CalendarManager.self) private var calendarManager
 
+    /// Carries the task id routed in from a widget `taskflow://` deep link.
+    /// This view observes `pendingTaskID` and presents the matching task.
+    @Environment(DeepLinkCoordinator.self) private var deepLinkCoordinator
+
     /// Live-updating list of active tasks, sorted newest-first.
     ///
     /// `@Query` hooks directly into SwiftData's change notifications, so the
@@ -80,6 +84,13 @@ struct SmartInboxView: View {
             if viewModel == nil {
                 viewModel = InboxViewModel(modelContext: modelContext, calendarManager: calendarManager)
             }
+            // A deep link may have arrived before this view existed; handle any
+            // id already pending so a cold-launch tap still opens the task.
+            presentDeepLinkedTask(deepLinkCoordinator.pendingTaskID)
+        }
+        // Present the task whenever a new deep link is routed in while the app runs.
+        .onChange(of: deepLinkCoordinator.pendingTaskID) { _, id in
+            presentDeepLinkedTask(id)
         }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
@@ -92,6 +103,25 @@ struct SmartInboxView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Deep linking
+
+    /// Resolves a deep-linked task id to its `Task` and presents it as a sheet,
+    /// then clears the pending id so the same link is not re-handled.
+    ///
+    /// The task is fetched directly by id rather than searched in `tasks`, so a
+    /// completed task (absent from the inbox query) still opens correctly.
+    private func presentDeepLinkedTask(_ id: UUID?) {
+        guard let id else { return }
+        var descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        if let task = try? modelContext.fetch(descriptor).first {
+            selectedTask = task
+        }
+        // Clear whether or not the task was found: a stale/deleted id should
+        // not keep re-firing this handler on every state change.
+        deepLinkCoordinator.pendingTaskID = nil
     }
 
     // MARK: - Pieces

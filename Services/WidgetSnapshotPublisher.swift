@@ -31,24 +31,44 @@ enum WidgetSnapshotPublisher {
         WidgetCenter.shared.reloadAllTimelines()
     }
 
+    /// Defensive cap on the day-window fetch.
+    ///
+    /// The predicate already restricts the fetch to a single day's pending
+    /// tasks, so realistic result sets are tiny. This cap only exists so a
+    /// pathological day (hundreds of tasks) can never pull an unbounded number
+    /// of `@Model` objects into the process. It is far larger than `maxTasks`
+    /// so the in-memory priority sort below still sees every task it would
+    /// render, keeping the "highest priority first" ordering exact.
+    private static let fetchCap = 200
+
     /// Today's pending tasks, sorted by priority (high → low) then due time.
     ///
-    /// The day window is applied in Swift rather than in the predicate:
-    /// nil-coalescing an optional inside a `#Predicate` is not expressible as a
-    /// SwiftData query and traps when the fetch is built.
+    /// The fetch is bounded two ways so it never loads the whole store into
+    /// RAM: a `#Predicate` that keeps only *incomplete tasks whose due date
+    /// falls inside today*, plus a `fetchLimit`. The day-window bounds are
+    /// expressed with an explicit `!= nil` guard and force-unwrap — SwiftData
+    /// lowers that to SQL, whereas nil-coalescing (`?? default`) inside a
+    /// `#Predicate` is not expressible and traps when the fetch is built.
     private static func todaysTasks(in context: ModelContext) -> [WidgetTask] {
         let calendar = Calendar.current
         let startOfDay = calendar.startOfDay(for: .now)
         let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
 
-        let descriptor = FetchDescriptor<Task>(predicate: #Predicate { !$0.isCompleted })
+        var descriptor = FetchDescriptor<Task>(
+            predicate: #Predicate { task in
+                !task.isCompleted
+                    && task.dueDate != nil
+                    && task.dueDate! >= startOfDay
+                    && task.dueDate! < endOfDay
+            },
+            // Order in the store by due time; the priority-first ordering the
+            // widget wants is layered on in memory over this small set.
+            sortBy: [SortDescriptor(\.dueDate)]
+        )
+        descriptor.fetchLimit = fetchCap
         let pending = (try? context.fetch(descriptor)) ?? []
 
         return pending
-            .filter { task in
-                guard let due = task.dueDate else { return false }
-                return due >= startOfDay && due < endOfDay
-            }
             .sorted { lhs, rhs in
                 if lhs.priority.rawValue != rhs.priority.rawValue {
                     return lhs.priority.rawValue > rhs.priority.rawValue
@@ -69,7 +89,22 @@ enum WidgetSnapshotPublisher {
     }
 
     /// Every project with its pending count, busiest first.
+    ///
+    /// Pending counts come from a single tasks fetch grouped by project id,
+    /// not from reading each project's `tasks` relationship. The old form
+    /// faulted in every project's full task array — one query per project
+    /// (N+1) — and then counted them in memory. Here one query over the
+    /// incomplete tasks builds the whole `[projectID: count]` map at once.
     private static func projects(in context: ModelContext) -> [WidgetProject] {
+        // One pass over incomplete tasks → pending count per project id.
+        let pendingDescriptor = FetchDescriptor<Task>(predicate: #Predicate { !$0.isCompleted })
+        let pendingTasks = (try? context.fetch(pendingDescriptor)) ?? []
+        var pendingByProject: [UUID: Int] = [:]
+        for task in pendingTasks {
+            guard let projectID = task.project?.id else { continue }
+            pendingByProject[projectID, default: 0] += 1
+        }
+
         let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)])
         let all = (try? context.fetch(descriptor)) ?? []
         return all
@@ -78,7 +113,7 @@ enum WidgetSnapshotPublisher {
                     id: project.id,
                     name: project.name,
                     colorHex: project.colorHex,
-                    pendingCount: project.tasks.filter { !$0.isCompleted }.count
+                    pendingCount: pendingByProject[project.id] ?? 0
                 )
             }
             .sorted { $0.pendingCount > $1.pendingCount }

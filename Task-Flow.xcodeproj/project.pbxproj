@@ -51,7 +51,6 @@
 		D883E88FE971717F2E76642A /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6C90BDAE7709BD324B719CE /* Tag.swift */; };
 		DCB71AA3461452A0841BDD74 /* PriorityBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB09821ADFD8F56771BD1B9D /* PriorityBadge.swift */; };
 		EC58BFBC0745FEC7B6E2DFC8 /* VoiceInputButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7D70B9802C8022EA255870 /* VoiceInputButton.swift */; };
-		EF1683E18CB95653710DDD77 /* TimelineViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CD03C6D796C7D61EDED2AE0 /* TimelineViewModel.swift */; };
 		EFDDACBD32E313751C8F41E0 /* SmartInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F234EEB9FCD45EC77D00F7E /* SmartInboxView.swift */; };
 		F284465A1ECD77D5F95F085A /* ProjectDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B3EF30654C606F02267D7A /* ProjectDetailView.swift */; };
 		F3168D2CC8F84D209966D5EA /* EventKitService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E84E69AEDEFF04C1667BCBA4 /* EventKitService.swift */; };
@@ -100,7 +99,6 @@
 		502A648B1E6FFE8A41615D17 /* Task-Flow.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "Task-Flow.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		57ECA06F8398550282EDA1F2 /* TaskIntelligenceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskIntelligenceService.swift; sourceTree = "<group>"; };
 		5A72091454C512CE9820F00C /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
-		5CD03C6D796C7D61EDED2AE0 /* TimelineViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineViewModel.swift; sourceTree = "<group>"; };
 		5E1F569168C434F990F25350 /* ProjectsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsView.swift; sourceTree = "<group>"; };
 		5E32A67CAE9D28B3C5371CE7 /* NaturalLanguageInputBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NaturalLanguageInputBar.swift; sourceTree = "<group>"; };
 		6544152484C55B637BBD44AB /* ProjectFilterIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectFilterIntent.swift; sourceTree = "<group>"; };
@@ -293,7 +291,6 @@
 			children = (
 				919895434CE991C5469158B2 /* InboxViewModel.swift */,
 				C23EBD841367304A1E6CF394 /* TaskGrouping.swift */,
-				5CD03C6D796C7D61EDED2AE0 /* TimelineViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -431,7 +428,6 @@
 				1F3D71719D648D330C6AD1C0 /* TaskIntelligenceService.swift in Sources */,
 				3E75D9034497EDA7540F164F /* TaskRowView.swift in Sources */,
 				BAEBC2CDD367B035675E9EEF /* Theme.swift in Sources */,
-				EF1683E18CB95653710DDD77 /* TimelineViewModel.swift in Sources */,
 				EC58BFBC0745FEC7B6E2DFC8 /* VoiceInputButton.swift in Sources */,
 				1C2376121070934E2413E738 /* VoiceTaskService.swift in Sources */,
 				62A71BA2612C662DBE3B559C /* WidgetSnapshotPublisher.swift in Sources */,

@@ -2,95 +2,100 @@ import SwiftUI
 import SwiftData
 import WidgetKit
 
-/// The top-level app entry point for Task-Flow.
+/// The SwiftData container plus the graph of interdependent `@Observable`
+/// services, built once and lazily.
 ///
-/// Owns the `ModelContainer` for all SwiftData models and injects
-/// shared service objects into the SwiftUI environment so every view
-/// in the hierarchy can reach them without prop-drilling.
-@main
-struct TaskFlowApp: App {
-    /// The single SwiftData model container shared across the whole app.
-    ///
-    /// Created eagerly at launch because every view that uses `@Query`
-    /// or `@Environment(\.modelContext)` depends on it being present
-    /// before the first render.
+/// This exists so `TaskFlowApp` needs no custom `init`. Previously the App
+/// value's initialiser built the whole graph and ran side-effectful setup
+/// (restoring calendar authorization) via `State(initialValue:)` — work that
+/// belongs behind a lazily-instantiated `@State`, not in the struct's `init`.
+/// Folding it here keeps the construction order the services require
+/// (`CalendarSyncService` needs `EventKitService`; `CalendarManager` needs
+/// both) while running exactly once, when SwiftUI first materialises the
+/// backing state.
+@MainActor
+@Observable
+final class AppServices {
+    /// The single SwiftData model container shared across the whole app,
+    /// backed by the App Group store the Widget extension also reads.
     let container: ModelContainer
 
-    /// Observable wrapper around `EKEventStore`. Injected into the
-    /// environment so that the calendar permission flow can be triggered
-    /// from any descendant view.
-    @State private var eventKitService: EventKitService
+    /// Observable wrapper around `EKEventStore`.
+    let eventKitService: EventKitService
 
-    /// Coordinates bidirectional sync between `Task` objects and
-    /// `EKEvent` records inside `EKEventStore`.
-    @State private var calendarSyncService: CalendarSyncService
+    /// Coordinates bidirectional sync between `Task` objects and `EKEvent` records.
+    let calendarSyncService: CalendarSyncService
 
-    /// High-level facade that drives the full calendar sync workflow,
-    /// including conflict detection and per-calendar selection.
-    @State private var calendarManager: CalendarManager
+    /// High-level facade driving the full calendar sync workflow.
+    let calendarManager: CalendarManager
 
-    /// Manages `SFSpeechRecognizer` and `AVAudioEngine` for voice-to-task
-    /// input. Kept as a `@State` service so the audio session lifecycle
-    /// is tied to the app lifetime rather than a single view.
-    @State private var voiceTaskService: VoiceTaskService
+    /// Manages the audio + speech stack for voice-to-task input.
+    let voiceTaskService: VoiceTaskService
 
-    /// Captures task ids opened from the Widget extension via `taskflow://`
-    /// deep links so views can present the tapped task.
-    @State private var deepLinkCoordinator = DeepLinkCoordinator()
-
-    /// Used to refresh the widget when the app stops being the active scene.
-    @Environment(\.scenePhase) private var scenePhase
+    /// Captures task ids opened from the Widget extension via `taskflow://` links.
+    let deepLinkCoordinator: DeepLinkCoordinator
 
     init() {
-        // Build the container against the shared App Group store so the Widget
-        // extension reads the exact same database this app writes to. Schema
-        // registration lives in TaskFlowContainer (Shared/), used by both targets.
+        // Schema registration lives in TaskFlowContainer (Shared/), used by both targets.
         container = TaskFlowContainer.makeForApp()
 
-        // Build the service graph manually because SwiftUI's DI system
-        // cannot create @Observable services that have inter-dependencies.
-        // CalendarSyncService depends on EventKitService, and CalendarManager
-        // depends on both, so construction order matters here.
+        // Construction order matters: css depends on eks, cm depends on both.
         let eks = EventKitService()
         // Restore authorization state from a previous session synchronously
         // (no prompt) so downstream services see the correct flags at construction
         // time -- CalendarManager eagerly loads the calendar list when authorized.
         eks.checkExistingAuthorization()
         let css = CalendarSyncService(eventKitService: eks)
-        let cm  = CalendarManager(eventKitService: eks, syncService: css)
-        _eventKitService     = State(initialValue: eks)
-        _calendarSyncService = State(initialValue: css)
-        _calendarManager     = State(initialValue: cm)
-        _voiceTaskService    = State(initialValue: VoiceTaskService())
+        eventKitService     = eks
+        calendarSyncService = css
+        calendarManager     = CalendarManager(eventKitService: eks, syncService: css)
+        voiceTaskService    = VoiceTaskService()
+        deepLinkCoordinator = DeepLinkCoordinator()
     }
+}
+
+/// The top-level app entry point for Task-Flow.
+///
+/// Injects the shared service objects into the SwiftUI environment so every
+/// view in the hierarchy can reach them without prop-drilling.
+@main
+struct TaskFlowApp: App {
+    /// The lazily-built service graph. Using a `@State` default expression
+    /// (rather than a custom `init`) means `AppServices()` runs once, when
+    /// SwiftUI first materialises this state, not on every App re-evaluation.
+    @State private var services = AppServices()
+
+    /// Used to refresh the widget when the app stops being the active scene.
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             RootTabView()
                 // Inject services via environment so child views can read
                 // them with @Environment(ServiceType.self).
-                .environment(eventKitService)
-                .environment(calendarManager)
-                .environment(voiceTaskService)
-                .environment(deepLinkCoordinator)
+                .environment(services.eventKitService)
+                .environment(services.calendarSyncService)
+                .environment(services.calendarManager)
+                .environment(services.voiceTaskService)
+                .environment(services.deepLinkCoordinator)
                 // Route widget deep links (taskflow://task/<uuid>) into the
                 // coordinator; the navigation layer can observe pendingTaskID.
                 .onOpenURL { url in
                     if let id = TaskDeepLink.taskID(from: url) {
-                        deepLinkCoordinator.open(taskID: id)
+                        services.deepLinkCoordinator.open(taskID: id)
                     }
                 }
         }
         // Attach the model container to the scene so every view in the
         // hierarchy gets access to the shared ModelContext automatically.
-        .modelContainer(container)
+        .modelContainer(services.container)
         // Republish the widget's data whenever the app leaves the foreground.
         // The widget cannot read SwiftData itself, so this is the only way its
         // content ever changes; without it the Home Screen kept showing
         // whatever was true when the snapshot was last written.
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
-                WidgetSnapshotPublisher.publish(from: container.mainContext)
+                WidgetSnapshotPublisher.publish(from: services.container.mainContext)
             }
         }
     }

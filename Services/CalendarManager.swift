@@ -20,6 +20,11 @@ import SwiftData
 @Observable
 final class CalendarManager {
 
+    /// `UserDefaults` key under which the user's chosen calendar identifier is
+    /// stored. Shared with `CalendarSyncService`, which reads it to pick the
+    /// calendar a task's event is created on, so the string is defined once here.
+    static let selectedCalendarDefaultsKey = "selectedCalendarIdentifier"
+
     // MARK: - Nested Types
 
     /// Represents the current phase of a sync operation.
@@ -68,7 +73,7 @@ final class CalendarManager {
     var selectedCalendarIdentifier: String? {
         didSet {
             // Mirror the selection to UserDefaults immediately; no explicit save needed.
-            UserDefaults.standard.set(selectedCalendarIdentifier, forKey: "selectedCalendarIdentifier")
+            UserDefaults.standard.set(selectedCalendarIdentifier, forKey: Self.selectedCalendarDefaultsKey)
         }
     }
 
@@ -94,7 +99,7 @@ final class CalendarManager {
         self.eventKitService = eventKitService
         self.syncService = syncService
         // Restore persisted calendar selection so the user does not have to re-pick it.
-        selectedCalendarIdentifier = UserDefaults.standard.string(forKey: "selectedCalendarIdentifier")
+        selectedCalendarIdentifier = UserDefaults.standard.string(forKey: Self.selectedCalendarDefaultsKey)
         // Populate the calendar list immediately if the user already authorized the app
         // in a previous session; avoids an empty picker on first render.
         if isAuthorized {

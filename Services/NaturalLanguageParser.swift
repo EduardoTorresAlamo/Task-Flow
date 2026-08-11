@@ -210,6 +210,22 @@ struct NaturalLanguageParser {
         "daily", "weekly", "monthly", "yearly", "annually"
     ]
 
+    /// Removes every whole-word occurrence of `marker` from `text`, case-insensitively.
+    ///
+    /// The marker is matched only when it is delimited by word boundaries, so
+    /// stripping "must" leaves "mustard" untouched. `marker` is regex-escaped
+    /// before use so a phrase containing regex metacharacters cannot change the
+    /// pattern's meaning. If the pattern somehow fails to compile the original
+    /// text is returned unchanged rather than corrupted.
+    private static func removingWholeWord(_ marker: String, from text: String) -> String {
+        let pattern = "\\b" + NSRegularExpression.escapedPattern(for: marker) + "\\b"
+        return text.replacingOccurrences(
+            of: pattern,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+    }
+
     /// Builds the cleaned task title by removing date strings, priority keywords,
     /// speech filler prefixes, and the notes segment from the raw input.
     ///
@@ -252,11 +268,14 @@ struct NaturalLanguageParser {
         }
 
         // Remove priority keywords so they do not appear in the title.
+        // Matched on word boundaries (\b): a plain substring replace turned
+        // "mustard" into "ard" (it contains "must") and "critically" into
+        // "ly". `\b<escaped>\b` only strips the keyword when it stands alone.
         let priorityMarkers = ["urgent", "asap", "critical", "high priority", "important",
                                "must", "need to", "low priority", "whenever", "someday",
                                "no rush", "eventually"]
         for marker in priorityMarkers {
-            result = result.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
+            result = Self.removingWholeWord(marker, from: result)
         }
 
         // Remove recurrence phrases so they do not leak into the title.
@@ -268,7 +287,7 @@ struct NaturalLanguageParser {
             options: [.regularExpression, .caseInsensitive]
         )
         for marker in Self.recurrenceMarkers {
-            result = result.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
+            result = Self.removingWholeWord(marker, from: result)
         }
 
         // Remove common speech filler prefixes produced by voice dictation.

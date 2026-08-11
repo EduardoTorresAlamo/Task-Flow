@@ -49,6 +49,16 @@ struct WidgetProject: Codable, Sendable, Identifiable, Hashable {
 /// Reads and writes the snapshot file in the App Group container.
 ///
 /// Compiled into both targets: the app writes, the widget reads.
+///
+/// **On encryption:** the snapshot is written as plain JSON on purpose. It
+/// lives inside the app's App Group container, which is sandboxed to this
+/// app + its extensions and never leaves the device (Task-Flow has no
+/// networking — see PRIVACY.md). At rest it is already protected by iOS Data
+/// Protection: the file is encrypted by the OS while the device is locked,
+/// keyed to the passcode. Adding an app-level cipher on top would buy no
+/// meaningful protection here (the app would have to store the key in the
+/// same sandbox) while making the widget's read path slower and more
+/// fragile. So no additional encryption is applied by design.
 enum WidgetSnapshotStore {
     /// The snapshot location. `nil` only if the App Group is unavailable.
     static var url: URL? {

@@ -25,6 +25,19 @@ enum TaskFlowContainer {
     /// The schema shared by both targets. Kept in sync with the app's registration.
     static let schema = Schema([Task.self, Project.self, Tag.self])
 
+    /// Raised when the App Group container cannot be resolved.
+    ///
+    /// This is fatal on purpose: silently opening a *different* per-process
+    /// store means the app and widget read two separate databases, and any
+    /// task written to the wrong one is invisible everywhere else — data loss
+    /// with no error. Surfacing the failure lets the caller decide (the app
+    /// logs it and degrades to memory; the widget shows its own error state).
+    enum StoreError: Error {
+        /// `FileManager` returned no container URL for `AppGroup.identifier`,
+        /// which almost always means the entitlement is missing or misspelled.
+        case appGroupUnavailable(identifier: String)
+    }
+
     /// Builds a `ModelContainer` backed by the App Group store.
     ///
     /// Throws rather than trapping. The widget extension **must** be able to
@@ -36,18 +49,17 @@ enum TaskFlowContainer {
     /// - Returns: A container both processes agree on.
     /// - Throws: Whatever `ModelContainer` throws when the store cannot be opened.
     static func makeShared() throws -> ModelContainer {
-        let configuration: ModelConfiguration
-        if let groupURL = FileManager.default.containerURL(
+        guard let groupURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: AppGroup.identifier
-        ) {
-            let storeURL = groupURL.appending(path: "TaskFlow.store")
-            configuration = ModelConfiguration(schema: schema, url: storeURL)
-        } else {
-            // App Group unavailable (e.g. entitlement missing): degrade to the
-            // default per-app store rather than failing outright.
-            configuration = ModelConfiguration(schema: schema)
+        ) else {
+            // Do NOT fall back to a default per-app store here: that store lives
+            // at a different path than the App Group one, so the app and widget
+            // would silently diverge and the user's tasks would appear to
+            // vanish. Fail loudly and let the caller handle it.
+            throw StoreError.appGroupUnavailable(identifier: AppGroup.identifier)
         }
-
+        let storeURL = groupURL.appending(path: "TaskFlow.store")
+        let configuration = ModelConfiguration(schema: schema, url: storeURL)
         return try ModelContainer(for: schema, configurations: configuration)
     }
 
@@ -60,9 +72,22 @@ enum TaskFlowContainer {
         do {
             return try makeShared()
         } catch {
-            let message = String(describing: error)
-            Logger(subsystem: "com.eduardotorres.Task-Flow", category: "Store")
-                .fault("Shared store unavailable, falling back to memory: \(message, privacy: .public)")
+            let logger = Logger(subsystem: "com.eduardotorres.Task-Flow", category: "Store")
+            // Log the error *type*, never any user content — there is none in
+            // these errors, but the rule is uniform (see PRIVACY.md).
+            switch error {
+            case StoreError.appGroupUnavailable(let identifier):
+                // Critical: the on-disk store is unreachable, so this session
+                // runs in memory and nothing the user does will persist. This
+                // is a build/entitlement misconfiguration, not a runtime blip.
+                logger.critical(
+                    "App Group \(identifier, privacy: .public) unavailable; running in-memory, changes will NOT persist"
+                )
+            default:
+                logger.fault(
+                    "Shared store failed to open (\(String(describing: type(of: error)), privacy: .public)); falling back to memory"
+                )
+            }
             let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             // If even an in-memory store cannot be built there is nothing left
             // to degrade to.
