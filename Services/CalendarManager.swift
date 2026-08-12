@@ -120,7 +120,7 @@ final class CalendarManager {
     /// `RootTabView.onAppear` so the prompt appears as early as possible.
     func requestAccess() async {
         // Delegates the actual permission request to EventKitService,
-        // which owns the EKEventStore and updates calendarAuthorized / remindersAuthorized.
+        // which owns the EKEventStore and updates calendarAuthorized.
         await eventKitService.requestPermissions()
         refreshCalendars()
     }

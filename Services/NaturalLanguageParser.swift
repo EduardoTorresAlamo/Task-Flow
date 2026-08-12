@@ -95,8 +95,8 @@ struct NaturalLanguageParser {
     /// than rebuilt on every parse. `\b` on both sides is what makes the match
     /// whole-word: "no rush" matches "no rush" but "asap" does not match inside
     /// a longer token.
-    private static let highPriorityPattern   = #"\b(?:urgent|asap|critical)\b"#
-    private static let mediumPriorityPattern = #"\b(?:important|high priority|must|need to)\b"#
+    private static let highPriorityPattern   = #"\b(?:urgent|asap|critical|high priority)\b"#
+    private static let mediumPriorityPattern = #"\b(?:important|must|need to)\b"#
     private static let lowPriorityPattern    = #"\b(?:low priority|whenever|someday|no rush|eventually)\b"#
 
     /// Extracts supplementary notes text that follows a recognized connector word.

@@ -119,7 +119,14 @@ struct ProjectDetailView: View {
                                 TaskRowView(
                                     task: task,
                                     allowsSwipeToComplete: false,
-                                    onTap: { selectedTask = task }
+                                    onTap: { selectedTask = task },
+                                    onToggleComplete: {
+                                        // Route un-completion through the view model so a
+                                        // recurring task's spawned successor is cleaned up.
+                                        if let viewModel {
+                                            Swift.Task { await viewModel.toggleCompletion(task) }
+                                        }
+                                    }
                                 )
                             }
                         }

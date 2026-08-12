@@ -322,6 +322,10 @@ struct TaskEditView: View {
     /// leaving it orphaned in the user's calendar, which is what happened when
     /// Save unconditionally re-synced.
     private func save() {
+        // Refuse to persist an empty or whitespace-only title, which would
+        // render as a blank row with no way to identify the task.
+        guard !draftTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
         let hadDueDate = task.dueDate != nil
 
         task.title = draftTitle

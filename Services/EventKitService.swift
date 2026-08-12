@@ -22,33 +22,20 @@ import Observation
     /// `true` when the user has granted full access to Calendar events.
     var calendarAuthorized = false
 
-    /// `true` when the user has granted full access to Reminders.
-    var remindersAuthorized = false
-
-    /// Requests full Calendar and Reminders access using the iOS 17+ async APIs.
+    /// Requests full Calendar access using the iOS 17+ async API.
     ///
     /// The older `requestAccess(to:completion:)` API is deprecated in iOS 17;
-    /// `requestFullAccessToEvents` and `requestFullAccessToReminders` are the
-    /// replacements and return a `Bool` directly rather than using a callback.
+    /// `requestFullAccessToEvents` is the replacement and returns a `Bool`
+    /// directly rather than using a callback.
     ///
-    /// On denial or error both flags are set to `false` so callers can safely
-    /// gate all store operations behind the authorization booleans.
+    /// On denial or error the flag is set to `false` so callers can safely
+    /// gate all store operations behind the authorization boolean.
     func requestPermissions() async {
-        // The two grants are independent: a Reminders denial must not clear the
-        // Calendar flag (or vice versa). Each request gets its own do-catch so a
-        // failure in one leaves the other's result intact.
         do {
             calendarAuthorized = try await store.requestFullAccessToEvents()
         } catch {
             // Calendar permission denied or an entitlement error occurred.
             calendarAuthorized = false
-        }
-
-        do {
-            remindersAuthorized = try await store.requestFullAccessToReminders()
-        } catch {
-            // Reminders permission denied or an entitlement error occurred.
-            remindersAuthorized = false
         }
     }
 
@@ -60,7 +47,6 @@ import Observation
     func checkExistingAuthorization() {
         // .fullAccess is the iOS 17+ status that replaces the old .authorized value.
         calendarAuthorized = EKEventStore.authorizationStatus(for: .event) == .fullAccess
-        remindersAuthorized = EKEventStore.authorizationStatus(for: .reminder) == .fullAccess
     }
 
     /// Returns all calendar events that fall within the given date window, sorted by start date.
