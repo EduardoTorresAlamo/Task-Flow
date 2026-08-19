@@ -22,13 +22,22 @@ enum WidgetSnapshotPublisher {
     ///
     /// Safe to call often: it is one fetch and one small file write.
     static func publish(from context: ModelContext) {
+        // Building the snapshot reads SwiftData `@Model` objects, which must
+        // stay on the main actor, so it happens synchronously here.
         let snapshot = WidgetSnapshot(
             generatedAt: .now,
             tasks: todaysTasks(in: context),
             projects: projects(in: context)
         )
-        WidgetSnapshotStore.write(snapshot)
-        WidgetCenter.shared.reloadAllTimelines()
+        // The JSON encode + atomic file write and the WidgetKit reload touch
+        // no SwiftData and can block on I/O. The only caller is the
+        // scene-phase transition, so doing them inline would stall the app
+        // lifecycle. Hand the finished (Sendable) snapshot to a detached task
+        // so publication runs off the main thread.
+        Swift.Task.detached(priority: .utility) {
+            WidgetSnapshotStore.write(snapshot)
+            WidgetCenter.shared.reloadAllTimelines()
+        }
     }
 
     /// Defensive cap on the day-window fetch.
