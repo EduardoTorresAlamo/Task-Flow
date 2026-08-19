@@ -38,7 +38,6 @@ targets:
       properties:
         UILaunchScreen: {}
         NSCalendarsFullAccessUsageDescription: "Task Flow syncs your tasks with Calendar so you can see them alongside your events."
-        NSRemindersFullAccessUsageDescription: "Task Flow syncs your tasks with Reminders so you can manage them in one place."
         NSMicrophoneUsageDescription: "Task Flow uses your microphone to capture voice-dictated tasks. Audio is transcribed on this device and is never uploaded."
         # The system's own first paragraph on this alert says speech data is sent
         # to Apple. That is the generic Speech-framework wording and it does not
