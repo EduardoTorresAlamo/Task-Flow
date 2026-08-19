@@ -69,18 +69,31 @@ import os.log
         ekEvent.location = enriched.location
         if let url = enriched.url { ekEvent.url = url }
 
-        // Mirror the task's recurrence onto the calendar event so a repeating
-        // task produces a repeating EKEvent. Setting to nil clears any rule
-        // that was present on a previously-recurring event.
+        // Recurrence is handled independently of the scalar fields above.
+        //
+        // A recurrence rule describes the whole series, so writing or removing
+        // one must be saved with `.futureEvents`; EventKit rejects a recurrence
+        // change saved with `.thisEvent`. The previous code unconditionally set
+        // `recurrenceRules = nil` in the non-recurring branch and then saved
+        // with `.thisEvent`. That did two harmful things: for a task the user
+        // had made repeating directly in Calendar it wiped their rule, and for
+        // an existing recurring occurrence the nil-with-.thisEvent combination
+        // threw, so the write silently failed and retried forever.
+        //
+        // The fix decouples the two cases and picks a matching span:
+        //   - task has a rule  → mirror it, save the series (`.futureEvents`)
+        //   - task has no rule → leave whatever recurrence the event already
+        //     carries untouched and save just this occurrence (`.thisEvent`)
+        let saveSpan: EKSpan
         if let rule = task.recurrenceRule {
             ekEvent.recurrenceRules = [Self.ekRecurrenceRule(from: rule)]
+            saveSpan = .futureEvents
         } else {
-            ekEvent.recurrenceRules = nil
+            saveSpan = .thisEvent
         }
 
         do {
-            // .thisEvent applies the save to only this occurrence, not recurring ones.
-            try store.save(ekEvent, span: .thisEvent)
+            try store.save(ekEvent, span: saveSpan)
             // Persist the stable identifier so we can re-find this event later.
             task.eventKitIdentifier = ekEvent.eventIdentifier
         } catch {
