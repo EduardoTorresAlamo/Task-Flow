@@ -89,9 +89,27 @@ enum TaskFlowContainer {
                 )
             }
             let fallback = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            // If even an in-memory store cannot be built there is nothing left
-            // to degrade to.
-            return try! ModelContainer(for: schema, configurations: fallback)
+            do {
+                return try ModelContainer(for: schema, configurations: fallback)
+            } catch {
+                // Even the in-memory store failed. Rather than trap on the
+                // launch screen (`try!`), log and degrade to an empty-schema
+                // in-memory container: SwiftUI still mounts and the app opens,
+                // just with no persistence, instead of dying at startup.
+                logger.fault(
+                    "In-memory fallback store failed (\(String(describing: type(of: error)), privacy: .public)); degrading to empty container"
+                )
+                let empty = ModelConfiguration(isStoredInMemoryOnly: true)
+                do {
+                    return try ModelContainer(for: Schema([]), configurations: empty)
+                } catch {
+                    // An empty in-memory schema failing means SwiftData itself
+                    // is non-functional; there is genuinely nothing left to
+                    // degrade to. Surface a clear message instead of an opaque
+                    // `try!` trap.
+                    fatalError("SwiftData unavailable: no ModelContainer could be built (\(type(of: error)))")
+                }
+            }
         }
     }
 }
