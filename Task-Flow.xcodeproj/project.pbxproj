@@ -15,6 +15,7 @@
 		0FB35EEEDB94AB11925863E4 /* Priority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B27DA00C00DCFB2351EB73C /* Priority.swift */; };
 		1C2376121070934E2413E738 /* VoiceTaskService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 467F6CBF777FBFAE0FA5F3AB /* VoiceTaskService.swift */; };
 		1F3D71719D648D330C6AD1C0 /* TaskIntelligenceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECA06F8398550282EDA1F2 /* TaskIntelligenceService.swift */; };
+		20FBD4C0B08C8831C69A4222 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1645AFF8B598AD0554663C56 /* PrivacyInfo.xcprivacy */; };
 		2422A9FD8DF190A843C253AA /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44476105E2A0BEEF8196C165 /* Theme.swift */; };
 		2449CE313B24DE7AF172FEB6 /* TaskFlowWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9CF487F2A5A304D4BFE5884C /* TaskFlowWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2452EFF4443E0F2547DB36C6 /* CalendarManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A62F2E81062179D0F6CAC22 /* CalendarManager.swift */; };
@@ -46,6 +47,7 @@
 		CBF197D39160A8609BB7439C /* TaskFlowSharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9627F48D346220C2441F5F1 /* TaskFlowSharedStore.swift */; };
 		CCCDE977C4F7092A5B0606AD /* Task.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D58D64C6B2FEF14E9C335E7 /* Task.swift */; };
 		D1644451A1E4CE61311BFB8B /* ProjectFilterIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6544152484C55B637BBD44AB /* ProjectFilterIntent.swift */; };
+		D1B4B60BF0808C76D7C91DC8 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1F0F6FAF7C64F978C3DF45E6 /* PrivacyInfo.xcprivacy */; };
 		D1CFABD055D871507B836B5A /* DeepLinkCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = E323A247C9EABEFABB8EB91F /* DeepLinkCoordinator.swift */; };
 		D710F36EF137092B66FD9DF5 /* RecurrenceRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9ECE59C6CC67E434EC3FA2 /* RecurrenceRule.swift */; };
 		D883E88FE971717F2E76642A /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6C90BDAE7709BD324B719CE /* Tag.swift */; };
@@ -85,8 +87,10 @@
 
 /* Begin PBXFileReference section */
 		04AFE925334EF7462A4C4DB8 /* TaskFlowApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskFlowApp.swift; sourceTree = "<group>"; };
+		1645AFF8B598AD0554663C56 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		18A5B81C3096214F72E415D6 /* TaskEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskEditView.swift; sourceTree = "<group>"; };
 		1B27DA00C00DCFB2351EB73C /* Priority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Priority.swift; sourceTree = "<group>"; };
+		1F0F6FAF7C64F978C3DF45E6 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		256E000F23FE32B7CC42B278 /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
 		35B3EF30654C606F02267D7A /* ProjectDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectDetailView.swift; sourceTree = "<group>"; };
 		37BC0672924A00BE70A48A16 /* CompletedTasksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompletedTasksView.swift; sourceTree = "<group>"; };
@@ -168,6 +172,7 @@
 		1D374C4E16CA4427FCC7510D = {
 			isa = PBXGroup;
 			children = (
+				1645AFF8B598AD0554663C56 /* PrivacyInfo.xcprivacy */,
 				9B164F4A1C506E34A47908DE /* App */,
 				569D962FE793E88865D43F2F /* Extensions */,
 				2D99A20C459C80D89B47EA86 /* Models */,
@@ -242,6 +247,7 @@
 			isa = PBXGroup;
 			children = (
 				E2CF64B789A728D037ECD62A /* Info.plist */,
+				1F0F6FAF7C64F978C3DF45E6 /* PrivacyInfo.xcprivacy */,
 				6544152484C55B637BBD44AB /* ProjectFilterIntent.swift */,
 				DC63D8B739D67D7DF6D4F8DC /* TaskFlowWidget.entitlements */,
 				F419A9B09F1D86ABA2305B27 /* TaskFlowWidgetBundle.swift */,
@@ -331,6 +337,7 @@
 			buildConfigurationList = 6DD7FA55B08FEBB65980329F /* Build configuration list for PBXNativeTarget "TaskFlowWidgetExtension" */;
 			buildPhases = (
 				EF9D3F9E7F7BFE7B2066B951 /* Sources */,
+				99822E38F95B3D43C33E4D2C /* Resources */,
 			);
 			buildRules = (
 			);
@@ -381,11 +388,20 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		99822E38F95B3D43C33E4D2C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1B4B60BF0808C76D7C91DC8 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		DD3005D1A7AD8B1C6BA67D0D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				A0D7A3DD4A4C647966F63AD2 /* Assets.xcassets in Resources */,
+				20FBD4C0B08C8831C69A4222 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

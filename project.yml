@@ -30,6 +30,9 @@ targets:
       - path: Extensions
       - path: Shared
       - path: Resources
+      # App Store required privacy manifest. Bundled at the app root by the
+      # build system regardless of group placement.
+      - path: PrivacyInfo.xcprivacy
     info:
       path: Task-Flow/Info.plist
       properties:
