@@ -1,116 +1,77 @@
-# Performance, Memory & Threading Audit Report
-
-## 1. Overview
-This module evaluates memory allocations, main-thread blocking, query efficiency, relationship faulting, and SwiftUI re-render performance across the Task-Flow codebase.
-
----
-
-## 2. Findings
-
-<a id="perf-01"></a>
-### PERF-01: Un-paginated In-Memory Array Filtering of All Database Tasks in `WidgetSnapshotPublisher`
-* **Severity**: 🚨 **CRITICAL**
-* **Category**: Performance / Memory Pressure
-* **File**: [`Services/WidgetSnapshotPublisher.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/WidgetSnapshotPublisher.swift#L44-L49)
-
-#### Problem Description
-Whenever the app moves to background (`onChange(of: scenePhase)` in `TaskFlowApp.swift`), `WidgetSnapshotPublisher.publish(from:)` is called.
-`todaysTasks(in:)` executes:
-```swift
-let descriptor = FetchDescriptor<Task>(predicate: #Predicate { !$0.isCompleted })
-let pending = (try? context.fetch(descriptor)) ?? []
-
-return pending
-    .filter { task in
-        guard let due = task.dueDate else { return false }
-        return due >= startOfDay && due < endOfDay
-    }
-```
-
-#### Real-World Impact
-1. `FetchDescriptor<Task>(predicate: #Predicate { !$0.isCompleted })` fetches **every single uncompleted task** in the database into RAM without a fetch limit or SQL `WHERE` clause on `dueDate`.
-2. If a power user has 5,000 pending tasks across months or years, `publish(from:)` instantiates 5,000 SwiftData `Task` instances in memory, allocates array storage, and evaluates Swift closures on the main thread right as the app is transitioning to background.
-3. iOS background execution limits give apps very few milliseconds to complete background scene phase transitions. High memory/CPU overhead during backgrounding risks process termination by `runningboardd` (0x20000000 / watchdog kill).
-
-#### Recommended Remediation
-Execute the date filtering directly inside the SwiftData `#Predicate` so SQLite performs the index-backed query:
-```swift
-let descriptor = FetchDescriptor<Task>(
-    predicate: #Predicate<Task> { task in
-        !task.isCompleted && task.dueDate != nil && task.dueDate! >= startOfDay && task.dueDate! < endOfDay
-    },
-    sortBy: [SortDescriptor(\.priority, order: .reverse), SortDescriptor(\.dueDate)]
-)
-descriptor.fetchLimit = maxTasks
-let todaysTasks = (try? context.fetch(descriptor)) ?? []
-```
+# Audit Module 05: Performance, Memory & Threading
+**Repositorio**: Task-Flow  
+**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Fecha de Auditoría**: 24 de Agosto de 2026  
+**Auditor**: Antigravity Senior Security & Software Architect  
+**Scope**: Hilo Principal, I/O de Base de Datos EventKit, Eficiencia de Queries SwiftData, Publicación de Snapshots  
 
 ---
 
-<a id="perf-02"></a>
-### PERF-02: N+1 Relationship Faulting Queries in `WidgetSnapshotPublisher.projects`
-* **Severity**: 🔴 **HIGH**
-* **Category**: Performance / Database Faulting
-* **File**: [`Services/WidgetSnapshotPublisher.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/WidgetSnapshotPublisher.swift#L73-L84)
+## 1. Resumen Ejecutivo (Executive Summary)
 
-#### Problem Description
-In `WidgetSnapshotPublisher.projects(in:)`:
-```swift
-let descriptor = FetchDescriptor<Project>(sortBy: [SortDescriptor(\.createdAt)])
-let all = (try? context.fetch(descriptor)) ?? []
-return all
-    .map { project in
-        WidgetProject(
-            id: project.id,
-            name: project.name,
-            colorHex: project.colorHex,
-            pendingCount: project.tasks.filter { !$0.isCompleted }.count
-        )
-    }
-```
-
-#### Real-World Impact
-`all` fetches all `Project` objects. Iterating through `all` and calling `project.tasks.filter { ... }` triggers CoreData fault resolution on `project.tasks` for **every single project** in a separate SQL query. This is a classic **N+1 query problem**. If the user has 20 projects, SwiftData executes 1 query for projects + 20 separate SQL queries for tasks, causing UI stutters on main actor.
-
-#### Recommended Remediation
-Use `FetchDescriptor` with aggregate queries or pre-fetch relationship data using `relationshipKeyPathsForPrefetching`.
+El análisis de rendimiento identificó un patrón de **I/O sincrónico en `@MainActor`** en la integración con EventKit (**HIGH-01**), junto con resoluciones exitosas previas en el pipeline del widget (**HIGH-03**).
 
 ---
 
-<a id="perf-03"></a>
-### PERF-03: Excessive SwiftUI Body Re-evaluations & Array Sorting in `SmartInboxView`
-* **Severity**: 🔴 **HIGH**
-* **Category**: Performance / SwiftUI Re-renders
-* **File**: [`Views/Inbox/SmartInboxView.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L44) & [`ViewModels/TaskGrouping.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/TaskGrouping.swift#L93-L108)
+## 2. Hallazgos Detallados
 
-#### Problem Description
-In `SmartInboxView`:
+### [HIGH-01] I/O Sincrónico de EventKit e IPC Mach Bloqueando el Hilo UI (`@MainActor`)
+- **Severidad**: 🔴 **HIGH**
+- **Componente**: [`Services/CalendarSyncService.swift:96,122`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarSyncService.swift#L96), [`Services/EventKitService.swift:66`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/EventKitService.swift#L66)
+- **CWE**: CWE-400 (Uncontrolled Resource Consumption / Main Thread Blocking)
+- **Estado**: 🔴 **OPEN / ACTIVE**
+
+#### Descripción del Problema
+`CalendarSyncService` y `EventKitService` están aislados en el actor principal (`@MainActor`).
+Dentro de `CalendarSyncService.sync(task:)` y `deleteEvent(for:)`, las llamadas a:
 ```swift
-private var groups: [DatedTaskGroup] { groupTasksBySection(tasks) }
+try store.save(ekEvent, span: ...)
+try eventKitService.store.remove(ekEvent, span: .thisEvent)
 ```
-`groups` is a computed property that executes `groupTasksBySection(tasks)` on **every single view body re-evaluation**.
-`groupTasksBySection` creates dictionaries, groups arrays, and re-sorts all elements (`bucket.sorted { ... }`).
+y en `EventKitService.fetchEvents(from:to:)`:
+```swift
+store.events(matching: predicate)
+```
+se ejecutan de forma **completamente síncrona en el hilo principal**.
 
-#### Real-World Impact
-When the user types text into `NaturalLanguageInputBar`, `viewModel.inputText` updates on every single keystroke. This causes `SmartInboxView` body to re-evaluate, re-running `groupTasksBySection(tasks)` over all tasks in the inbox on every single keystroke. Typing feels sluggish on device.
+#### Impacto Técnico
+1. **Llamadas IPC y Bloqueo de Disco**: `EKEventStore` se comunica a través de Mach IPC con el daemon `calaccessd`, el cual lee y escribe en la base de datos SQLite de Calendarios del sistema (`Calendar.sqlitedb`).
+2. **Caída de Frames (Jank)**: Cuando la base de datos de calendarios del usuario es voluminosa o la sincronización de iCloud Calendar está activa, estas llamadas pueden tardar entre 50 ms y más de 300 ms, bloqueando la interfaz de usuario en transiciones o al crear/editar tareas.
+3. **Riesgo de Watchdog ANR**: Si se ejecutan operaciones continuas o en bucle (e.g. `syncAllTasks`), el bloqueo acumulado del hilo principal puede disparar la terminación de la aplicación por el Watchdog de iOS (`0x8badf00d`).
 
-#### Recommended Remediation
-Memoize grouped tasks or update `groups` only when `tasks` array changes or date boundaries cross.
+#### Remediación Propuesta
+Ejecutar las operaciones de I/O de `EKEventStore` fuera del hilo principal usando `Task.detached(priority: .utility)`:
+```swift
+func syncInBackground(eventData: TaskSnapshotData, store: EKEventStore) async throws -> String? {
+    try await Task.detached(priority: .utility) {
+        let event = store.event(withIdentifier: eventData.eventIdentifier ?? "") ?? EKEvent(eventStore: store)
+        // Configurar campos
+        try store.save(event, span: .thisEvent)
+        return event.eventIdentifier
+    }.value
+}
+```
 
 ---
 
-<a id="perf-04"></a>
-### PERF-04: Synchronous EventKit XPC Queries on `@MainActor`
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: Performance / Thread Blocking
-* **File**: [`Services/EventKitService.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/EventKitService.swift#L71-L72) & [`Services/CalendarManager.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L196)
+### [HIGH-03] Serialización Sincrónica de Snapshot de Widget en `@MainActor` — RESUELTO
+- **Severidad**: 🔴 **HIGH**
+- **Componente**: [`Services/WidgetSnapshotPublisher.swift:37-40`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/WidgetSnapshotPublisher.swift#L37-L40)
+- **Estado**: ✅ **VERIFICADO RESUELTO** (Commit `bc61ab3`)
 
-#### Problem Description
-`EventKitService.fetchEvents(from:to:)` calls `store.events(matching: predicate)` synchronously on `@MainActor`.
-`EKEventStore.events(matching:)` performs synchronous XPC IPC calls to Apple's `calaccessd` calendar daemon.
+#### Verificación
+En el commit `bc61ab3`, la codificación JSON y la escritura atómica a disco de `WidgetSnapshot` fueron desacopladas del hilo principal:
+```swift
+Swift.Task.detached(priority: .utility) {
+    WidgetSnapshotStore.write(snapshot)
+    WidgetCenter.shared.reloadAllTimelines()
+}
+```
+Esto asegura que la transición de ciclo de vida (`scenePhase != .active`) no sufra retardo al enviar la app a segundo plano.
 
-#### Real-World Impact
-If calendar access is slow or the system daemon is under load, calling `fetchEvents` directly on `@MainActor` blocks main thread UI rendering, causing dropped frames (hitch rate increase) during scroll or view appearance.
+---
 
-#### Recommended Remediation
-Perform EventKit predicate fetching on a background actor and return immutable snapshot models to `@MainActor`.
+## 3. Optimizaciones de Rendimiento Existentes Verificadas
+
+1. **Agrupación de Proyectos en un Solo Pase**: [`Services/WidgetSnapshotPublisher.swift:108-115`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/WidgetSnapshotPublisher.swift#L108-L115) realiza una única consulta sobre las tareas incompletas y acumula el conteo en un diccionario (`pendingByProject[projectID, default: 0] += 1`), eliminando el antipatrón de consulta N+1.
+2. **Caché Estática de `DateFormatter`**: [`Views/Tasks/TaskRowView.swift:59-70`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Tasks/TaskRowView.swift#L59-L70) reutiliza instancias `static let` de `DateFormatter`, evitando instanciaciones costosas durante el scroll en `ScrollView` y `LazyVStack`.

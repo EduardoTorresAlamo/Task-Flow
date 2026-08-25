@@ -1,211 +1,119 @@
-# Business Logic, Data Loss & Race Conditions Audit Report
-
-## 1. Overview
-This module details operational bugs, potential data loss conditions, unhandled failure modes, race conditions, and logical flaws in Task-Flow's core workflows.
+# Audit Module 02: Business Logic, Sync & Data Integrity
+**Repositorio**: Task-Flow  
+**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Fecha de Auditoría**: 24 de Agosto de 2026  
+**Auditor**: Antigravity Senior Security & Software Architect  
+**Scope**: Mecánicas de Recurrencia, Sincronización EventKit, Cadenas de Sucesores, Parser de Lenguaje Natural  
 
 ---
 
-## 2. Findings
+## 1. Resumen Ejecutivo (Executive Summary)
 
-<a id="logic-01"></a>
-### LOGIC-01: App Group Fallback Causes Silent Multi-Store Data Loss & Desync
-* **Severity**: 🚨 **CRITICAL**
-* **Category**: Data Integrity / Data Loss
-* **File**: [`Shared/TaskFlowSharedStore.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Shared/TaskFlowSharedStore.swift#L45-L52)
+El análisis de la lógica de negocio, ciclo de vida de tareas y sincronización con Apple Calendar reveló **1 VULNERABILIDAD CRÍTICA (`CRIT-01`)** en el modelo de recurrencia EventKit y **1 anomalía de integridad (`MED-04`)** en el seguimiento de sucesores eliminados.
 
-#### Problem Description
-When building the shared `ModelContainer`, `TaskFlowContainer` checks if the App Group container URL is available:
+---
+
+## 2. Hallazgos Detallados
+
+### [CRIT-01] Mapeo Dual de Recurrencia Genera Series Duplicadas Exponenciales en Apple Calendar
+- **Severidad**: 🚨 **CRITICAL**
+- **Componente**: [`Services/CalendarSyncService.swift:88-93`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarSyncService.swift#L88-L93), [`ViewModels/InboxViewModel.swift:211-222`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L211-L222)
+- **CWE**: CWE-400 (Uncontrolled Resource Consumption / Calendar Data Duplication)
+- **Estado**: 🚨 **OPEN / ACTIVE**
+
+#### Causa Raíz
+Task-Flow gestiona la recurrencia mediante **materialización discreta de tareas**: al completar una tarea recurrente, `InboxViewModel.completeRecurring(task)` marca la tarea original como completada en SwiftData y genera una nueva instancia de `Task` (`next`) con la siguiente fecha de vencimiento (`nextDue`), heredando la regla `recurrenceRule`.
+
+Sin embargo, en `CalendarSyncService.swift`:
 ```swift
-if let groupURL = FileManager.default.containerURL(
-    forSecurityApplicationGroupIdentifier: AppGroup.identifier
-) {
-    let storeURL = groupURL.appending(path: "TaskFlow.store")
-    configuration = ModelConfiguration(schema: schema, url: storeURL)
+let saveSpan: EKSpan
+if let rule = task.recurrenceRule {
+    ekEvent.recurrenceRules = [Self.ekRecurrenceRule(from: rule)]
+    saveSpan = .futureEvents
 } else {
-    // App Group unavailable (e.g. entitlement missing): degrade to default per-app store
-    configuration = ModelConfiguration(schema: schema)
+    saveSpan = .thisEvent
 }
+try store.save(ekEvent, span: saveSpan)
 ```
-If the App Group entitlement fails on device (e.g., during signing changes or free developer profile expiration), the main app quietly initializes a default local store file at `~/Documents/default.store`. Meanwhile, the Widget extension (which also calls `makeShared()`) fails or initializes a separate store file in its container.
+Cuando `CalendarSyncService.sync(task:)` procesa la primera tarea recurrente, crea un `EKEvent` en Apple Calendar y le adjunta una regla `EKRecurrenceRule`. En EventKit, un evento con `EKRecurrenceRule` genera una serie que se repite automáticamente en el calendario hacia el futuro.
 
-#### Real-World Impact
-1. Tasks created by the user in the main app are written to `default.store`.
-2. The Widget extension reads from `TaskFlow.store` or `widget-snapshot.json` in the App Group directory.
-3. The app and widget operate on completely different databases with zero indication to the user. Tasks saved in the app vanish from the widget, and tasks created via widget background intents are written to a store the app never reads.
+Cuando el usuario completa la ocurrencia 1 en la app:
+1. `InboxViewModel` crea la ocurrencia 2 (`next`), que también tiene `next.recurrenceRule = rule`.
+2. `completeRecurring` invoca `await calendarManager.syncTask(next)`.
+3. `CalendarSyncService` crea un **segundo** `EKEvent` para `next` y **también le añade una regla `EKRecurrenceRule`**.
+4. Ahora Apple Calendar tiene **DOS series de eventos recurrentes paralelas y superpuestas**.
+5. Al completar la ocurrencia 2, se crea la ocurrencia 3 con su propio `EKEvent` recurrente, generando **TRES series superpuestas**.
 
-#### Recommended Remediation
-Fail explicitly or surface a high-visibility warning to the user if the App Group container is unreachable, rather than silently splitting user data into two independent databases:
+#### Escenario de Impacto
+```
+Tarea Inicial (Diaria):
+  Task-Flow: [Tarea 1 (23 Ago)] -> Sincroniza EKEvent #1 (Repite Diario)
+  Calendar: 23 Ago (Evt1), 24 Ago (Evt1), 25 Ago (Evt1), 26 Ago (Evt1)...
+
+Usuario completa Tarea 1 el 23 Ago:
+  Task-Flow: Tarea 1 Completada. Tarea 2 creada para 24 Ago.
+  Task-Flow: [Tarea 2 (24 Ago)] -> Sincroniza EKEvent #2 (Repite Diario desde 24 Ago)
+  Calendar: 
+    23 Ago: Evt1
+    24 Ago: Evt1 + Evt2 (DUPLICADO)
+    25 Ago: Evt1 + Evt2 (DUPLICADO)
+    26 Ago: Evt1 + Evt2 (DUPLICADO)...
+
+Usuario completa Tarea 2 el 24 Ago:
+  Calendar:
+    25 Ago: Evt1 + Evt2 + Evt3 (TRIPLICADO)...
+```
+
+#### Remediación Obligatoria
+Dado que Task-Flow materializa cada ocurrencia como un `Task` independiente en SwiftData, la sincronización en Calendar debe crear eventos puntuales (`EKEvent` discretos sin `EKRecurrenceRule`):
+
+```diff
+--- a/Services/CalendarSyncService.swift
++++ b/Services/CalendarSyncService.swift
+@@ -87,7 +87,3 @@ final class CalendarSyncService {
+-        let saveSpan: EKSpan
+-        if let rule = task.recurrenceRule {
+-            ekEvent.recurrenceRules = [Self.ekRecurrenceRule(from: rule)]
+-            saveSpan = .futureEvents
+-        } else {
+-            saveSpan = .thisEvent
+-        }
++        ekEvent.recurrenceRules = nil
++        let saveSpan: EKSpan = .thisEvent
+```
+
+---
+
+### [MED-04] Ruptura de Cadena de Sucesores al Eliminar Manualmente una Tarea Sucesora
+- **Severidad**: 🟡 **MEDIUM**
+- **Componente**: [`ViewModels/InboxViewModel.swift:235-254`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L235-L254), [`Views/Tasks/TaskEditView.swift:76-80`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Tasks/TaskEditView.swift#L76-L80)
+- **CWE**: CWE-672 (Operation on Resource After Expiration or Release)
+- **Estado**: ⚠️ **OPEN**
+
+#### Descripción
+Al completar una tarea recurrente `A`, se asigna `A.spawnedSuccessorID = B.id`.
+Si el usuario abre la tarea `B` en `TaskEditView` y la elimina con el botón "Delete Task", `B` es eliminada de SwiftData.
+Sin embargo, `A.spawnedSuccessorID` mantiene el UUID de `B` (puntero huérfano).
+Si el usuario más tarde des-completa `A` en `CompletedTasksView`:
+`removeSpawnedSuccessor(of: A)` busca a `B` por UUID, la consulta devuelve `nil` y la función retorna de inmediato. Si `B` ya había generado a `C` antes de ser eliminada, la tarea `C` queda huérfana en el Inbox duplicando el flujo.
+
+#### Remediación
+Al eliminar cualquier tarea en `TaskEditView` o en el ViewModel, buscar y limpiar referencias en tareas precursoras:
 ```swift
-static func makeShared() throws -> ModelContainer {
-    guard let groupURL = FileManager.default.containerURL(
-        forSecurityApplicationGroupIdentifier: AppGroup.identifier
-    ) else {
-        throw StoreError.appGroupUnavailable(AppGroup.identifier)
+func deleteTaskAndCleanPointers(_ task: Task, in context: ModelContext) {
+    let taskID = task.id
+    let descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.spawnedSuccessorID == taskID })
+    if let precursor = try? context.fetch(descriptor).first {
+        precursor.spawnedSuccessorID = nil
     }
-    let storeURL = groupURL.appending(path: "TaskFlow.store")
-    let configuration = ModelConfiguration(schema: schema, url: storeURL)
-    return try ModelContainer(for: schema, configurations: configuration)
+    context.delete(task)
 }
 ```
 
 ---
 
-<a id="logic-02"></a>
-### LOGIC-02: Selected Calendar Preference (`selectedCalendarIdentifier`) Silently Ignored
-* **Severity**: 🔴 **HIGH**
-* **Category**: Broken Feature / User Preference Loss
-* **File**: [`Services/CalendarSyncService.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarSyncService.swift#L52) & [`Services/CalendarManager.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L68-L73)
+## 3. Evaluación de `NaturalLanguageParser` e `IntelligenceEnricher`
 
-#### Problem Description
-`CalendarManager` exposes `selectedCalendarIdentifier` (persisted to `UserDefaults` under `"selectedCalendarIdentifier"`) so users can choose which calendar Task-Flow syncs events to.
-
-However, inside `CalendarSyncService.sync(task:)`, when a new `EKEvent` is instantiated, line 52 executes:
-```swift
-ekEvent = EKEvent(eventStore: store)
-ekEvent.calendar = store.defaultCalendarForNewEvents
-```
-`CalendarSyncService` **never** reads `CalendarManager.selectedCalendarIdentifier`! It unconditionally forces every event onto `store.defaultCalendarForNewEvents`.
-
-#### Real-World Impact
-User preference selection in the app settings/picker is completely useless. If a user selects a dedicated "Task-Flow" or "Work" calendar, every synced task is still forced into their primary default calendar ("Personal" / "iCloud").
-
-#### Recommended Remediation
-Pass `selectedCalendarIdentifier` to `CalendarSyncService` or resolve the calendar from `EKEventStore`:
-```swift
-if let selectedID = calendarManager.selectedCalendarIdentifier,
-   let calendar = store.calendar(withIdentifier: selectedID) {
-    ekEvent.calendar = calendar
-} else {
-    ekEvent.calendar = store.defaultCalendarForNewEvents
-}
-```
-
----
-
-<a id="logic-03"></a>
-### LOGIC-03: NaturalLanguageParser Substring Stripping Corrupts English Words ("mustard" -> "ard")
-* **Severity**: 🔴 **HIGH**
-* **Category**: Logic Bug / Text Corruption
-* **File**: [`Services/NaturalLanguageParser.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/NaturalLanguageParser.swift#L258-L260)
-
-#### Problem Description
-`buildTitle` strips priority keywords from the user's input:
-```swift
-let priorityMarkers = ["urgent", "asap", "critical", "high priority", "important",
-                       "must", "need to", "low priority", "whenever", "someday",
-                       "no rush", "eventually"]
-for marker in priorityMarkers {
-    result = result.replacingOccurrences(of: marker, with: "", options: .caseInsensitive)
-}
-```
-`replacingOccurrences` performs raw substring replacement without word-boundary anchoring (`\b`).
-
-#### Real-World Impact
-- Input: `"Buy mustard for hot dogs"` -> `extractPriority` matches `"must"` (Priority `.medium`), then `buildTitle` strips `"must"` from `"mustard"`, leaving title as `"Buy ard for hot dogs"`.
-- Input: `"Discussion regarding important matter"` -> title corrupted.
-- Input: `"Someday project"` -> title becomes `" project"`.
-
-#### Recommended Remediation
-Use regex with word boundaries (`\b`) to replace priority markers:
-```swift
-for marker in priorityMarkers {
-    let pattern = #"\b"# + NSRegularExpression.escapedPattern(for: marker) + #"\b"#
-    result = result.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
-}
-```
-
----
-
-<a id="logic-04"></a>
-### LOGIC-04: Silent Exception Swallowing in EventKit I/O Operations
-* **Severity**: 🔴 **HIGH**
-* **Category**: Silent Failure / Error Handling
-* **File**: [`Services/CalendarSyncService.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarSyncService.swift#L81-L83,L103-L105)
-
-#### Problem Description
-`CalendarSyncService` handles EventKit save and remove operations with empty catch blocks:
-```swift
-do {
-    try store.save(ekEvent, span: .thisEvent)
-    task.eventKitIdentifier = ekEvent.eventIdentifier
-} catch {
-    // Save failed -- eventKitIdentifier remains unchanged
-}
-```
-```swift
-do {
-    try eventKitService.store.remove(ekEvent, span: .thisEvent)
-    task.eventKitIdentifier = nil
-} catch {
-    // Removal failed -- identifier preserved so retry is possible
-}
-```
-
-#### Real-World Impact
-If a calendar is read-only (e.g. subscribed calendar), or if EventKit access fails due to store locks or restricted calendar permissions, the error is completely swallowed.
-1. The UI reports `syncState = .done(lastSyncedAt: Date())`.
-2. The user assumes the task was synced to their calendar, but no calendar event was created.
-3. If an event fails to delete, `removeSync` silently fails, leaving orphaned calendar events on the user's device calendar.
-
-#### Recommended Remediation
-Log the error using `Logger` and update `CalendarManager.syncState` with `.error(message:)` so the UI can notify the user of failed calendar syncs:
-```swift
-do {
-    try store.save(ekEvent, span: .thisEvent)
-    task.eventKitIdentifier = ekEvent.eventIdentifier
-} catch {
-    Logger(subsystem: "com.eduardotorres.Task-Flow", category: "CalendarSync")
-        .error("Failed to save EKEvent: \(error.localizedDescription)")
-    throw error
-}
-```
-
----
-
-<a id="logic-05"></a>
-### LOGIC-05: Broken Deep-Link Coordinator Wiring (Widget Taps Never Open Target Task)
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: Broken Feature / Deep Linking
-* **File**: [`App/DeepLinkCoordinator.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/App/DeepLinkCoordinator.swift#L18) & [`App/TaskFlowApp.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/App/TaskFlowApp.swift#L75)
-
-#### Problem Description
-`TaskFlowApp` injects `DeepLinkCoordinator` into the environment and updates `deepLinkCoordinator.pendingTaskID` when a `taskflow://task/<uuid>` URL is received.
-
-However, **no view in the application reads or observes `DeepLinkCoordinator`**!
-- `SmartInboxView` does not observe `pendingTaskID`.
-- `RootTabView` does not observe `pendingTaskID`.
-- No `.onChange(of: deepLinkCoordinator.pendingTaskID)` modifier exists anywhere in the codebase.
-
-#### Real-World Impact
-When the user taps a task row in the Widget, iOS opens Task-Flow via `taskflow://task/<uuid>`. The app launches or comes to foreground, decodes the UUID, stores it in `DeepLinkCoordinator.pendingTaskID`, and **does absolutely nothing with it**. The tapped task is never selected, presented, or scrolled into view.
-
-#### Recommended Remediation
-Add deep-link observation in `SmartInboxView` or `RootTabView` to present `TaskEditView` when `pendingTaskID` changes:
-```swift
-.onChange(of: deepLinkCoordinator.pendingTaskID) { _, id in
-    guard let id, let task = tasks.first(where: { $0.id == id }) else { return }
-    selectedTask = task
-    deepLinkCoordinator.pendingTaskID = nil
-}
-```
-
----
-
-<a id="logic-06"></a>
-### LOGIC-06: Deletion Ordering Race Condition in `TaskEditView` and `SmartInboxView`
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: Concurrency / Race Condition
-* **File**: [`Views/Inbox/SmartInboxView.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L89-L92)
-
-#### Problem Description
-When deleting a task from `SmartInboxView` or `CompletedTasksView`:
-```swift
-Swift.Task {
-    await calendarManager.removeSync(for: task)
-    modelContext.delete(task)
-}
-```
-`removeSync(for: task)` is an `async` operation that queries `EKEventStore`. While `removeSync` is awaiting, `task` remains in the SwiftData `ModelContext` and `@Query` results. If the user rapidly taps another action on the task card or closes/re-opens the sheet before `removeSync` returns, a race condition occurs where operations run on a task in the middle of being deleted.
-
-#### Recommended Remediation
-Mark the task UI state immediately as pending deletion (e.g. local state or flag) or wrap the deletion flow in a synchronous context update with proper async boundary isolation.
+1. **Word-Boundary Matching**: [`NaturalLanguageParser.swift:86-100`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/NaturalLanguageParser.swift#L86-L100) utiliza expresiones regulares con `\b` (`#"\b(?:urgent|asap|critical|high priority)\b"#`), evitando colisiones léxicas como `"mustard"` o `"somedays"`.
+2. **Extracción de Fechas**: `NSDataDetector` opera de forma determinista y síncrona sin llamadas a red.
+3. **Extracción de Metadatos Enriquecidos**: [`IntelligenceEnricher.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/IntelligenceEnricher.swift) procesa nombres de lugares y personas mediante `NLTagger` con `.nameType` y calcula duraciones con patrones regex (`30 min`, `2 hours`).

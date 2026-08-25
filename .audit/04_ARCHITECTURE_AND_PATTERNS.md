@@ -1,144 +1,113 @@
-# Architecture & Design Patterns Audit Report
-
-## 1. Overview
-This module analyzes architectural choices, dependency injection, SwiftUI state lifecycles (`@State`, `@Observable`), separation of concerns, and MVVM layer boundaries across the Task-Flow application.
-
----
-
-## 2. Findings
-
-<a id="arch-01"></a>
-### ARCH-01: Impermissible `@State` Property Initialization in `TaskFlowApp.init()`
-* **Severity**: 🔴 **HIGH**
-* **Category**: SwiftUI Architecture / State Lifecycle Anti-Pattern
-* **File**: [`App/TaskFlowApp.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/App/TaskFlowApp.swift#L22-L36,L61-L64)
-
-#### Problem Description
-In `TaskFlowApp.swift`:
-```swift
-@State private var eventKitService: EventKitService
-@State private var calendarSyncService: CalendarSyncService
-@State private var calendarManager: CalendarManager
-@State private var voiceTaskService: VoiceTaskService
-
-init() {
-    ...
-    let eks = EventKitService()
-    eks.checkExistingAuthorization()
-    let css = CalendarSyncService(eventKitService: eks)
-    let cm  = CalendarManager(eventKitService: eks, syncService: css)
-    _eventKitService     = State(initialValue: eks)
-    _calendarSyncService = State(initialValue: css)
-    _calendarManager     = State(initialValue: cm)
-    _voiceTaskService    = State(initialValue: VoiceTaskService())
-}
-```
-Initializing `@State` storage directly via `_property = State(initialValue: ...)` inside an `App` or `View` `init()` is a known SwiftUI anti-pattern.
-
-In SwiftUI, the system creates and re-instantiates `App` and `View` structs whenever scene properties, traits, or environmental changes occur. Re-running `init()` instantiates new service instances (`EventKitService()`, `CalendarManager()`, etc.). Because `@State` storage is managed externally by SwiftUI's graph, the new instances created in `init()` are discarded, BUT transient initializations inside `init()` (such as `eks.checkExistingAuthorization()` and `CalendarManager.init()`'s `refreshCalendars()`) re-run on discarded instances!
-
-#### Real-World Impact
-1. Unnecessary allocations and side-effects on every App struct re-evaluation.
-2. If SwiftUI re-evaluates `App` during scene phase transitions, state mismatch can occur between the discarded local initialization and the persisted `@State` storage.
-
-#### Recommended Remediation
-Use singletons, a root dependency container, or lazy holder pattern for top-level services:
-```swift
-@main
-struct TaskFlowApp: App {
-    let container: ModelContainer
-    
-    // Hold services in a dedicated observable app model or state object
-    @State private var services = AppServices()
-
-    var body: some Scene {
-        WindowGroup {
-            RootTabView()
-                .environment(services.eventKitService)
-                .environment(services.calendarManager)
-                ...
-        }
-        .modelContainer(container)
-    }
-}
-```
+# Audit Module 04: Architecture & Design Patterns
+**Repositorio**: Task-Flow  
+**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Fecha de Auditoría**: 24 de Agosto de 2026  
+**Auditor**: Antigravity Senior Security & Software Architect  
+**Scope**: MVVM con `@Observable`, Concurrencia Estricta Swift 6, Inyección de Dependencias, Ciclos de Vida SwiftUI  
 
 ---
 
-<a id="arch-02"></a>
-### ARCH-02: Omitted Environment Injection for `CalendarSyncService`
-* **Severity**: 🔴 **HIGH**
-* **Category**: Dependency Injection / Environment Failure
-* **File**: [`App/TaskFlowApp.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/App/TaskFlowApp.swift#L72-L75)
+## 1. Resumen Ejecutivo (Executive Summary)
 
-#### Problem Description
-`TaskFlowApp` initializes `calendarSyncService` as `@State` (line 26), but injects only a subset of services into the view hierarchy:
-```swift
-RootTabView()
-    .environment(eventKitService)
-    .environment(calendarManager)
-    .environment(voiceTaskService)
-    .environment(deepLinkCoordinator)
-```
-`calendarSyncService` is **omitted** from `.environment(...)`!
+Task-Flow sigue un patrón arquitectónico moderno basado en SwiftUI y ViewModels `@Observable` bajo Swift 6 strict concurrency.
 
-#### Real-World Impact
-If any child view or component attempts to read `@Environment(CalendarSyncService.self)` (or if code is refactored to consume it directly), Swift 6 observation will immediately crash the application at runtime with a missing environment object precondition failure.
+Puntos arquitectónicos clave:
+- **`AppServices`**: Centraliza la inicialización de servicios y el contenedor de SwiftData sin re-instanciación redundante en `TaskFlowApp`.
+- **Aislamiento de Concurrencia**: Tipos `@MainActor` bien delimitados y closures de audio desacoplados (`nonisolated static`).
 
-#### Recommended Remediation
-Either inject `calendarSyncService` into the environment alongside other services or explicitly document that `CalendarSyncService` is internal to `CalendarManager`.
+Se identifican dos áreas de mejora arquitectónica:
+1. **[MED-02] OPEN**: Inicialización de ViewModels opcionales `@State` en `.onAppear`.
+2. **[MED-03] OPEN**: Violación de SRP por acoplamiento de múltiples vistas a `InboxViewModel`.
 
 ---
 
-<a id="arch-03"></a>
-### ARCH-03: Option-wrapped Lazy ViewModel Instantiation Anti-Pattern in `SmartInboxView`
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: SwiftUI Architecture / View Lifecycle
-* **File**: [`Views/Inbox/SmartInboxView.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L36,L80-L82)
+## 2. Hallazgos Detallados
 
-#### Problem Description
-In `SmartInboxView.swift`:
+### [MED-02] Inicialización Lazy de ViewModels Opcionales `@State` en `.onAppear`
+- **Severidad**: 🟡 **MEDIUM**
+- **Componente**: [`Views/Inbox/SmartInboxView.swift:40,84-86`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L40), [`Views/Completed/CompletedTasksView.swift:30,56-58`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L30), [`Views/Projects/ProjectDetailView.swift:22,70-72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L22)
+- **CWE**: CWE-1076 (Code Quality / Architectural Anti-Pattern)
+- **Estado**: ⚠️ **OPEN**
+
+#### Descripción
+En las vistas de Inbox, Done y Detalle de Proyecto, los view models se declaran como `@State private var viewModel: InboxViewModel?` y se instancian condicionalmente en `.onAppear`:
 ```swift
 @State private var viewModel: InboxViewModel?
 
-var body: some View {
-    ...
-    if let vm = viewModel {
-        NaturalLanguageInputBar(viewModel: vm)
-    }
-}
 .onAppear {
     if viewModel == nil {
         viewModel = InboxViewModel(modelContext: modelContext, calendarManager: calendarManager)
     }
 }
 ```
+En `SmartInboxView.swift`:
+```swift
+if let vm = viewModel {
+    NaturalLanguageInputBar(viewModel: vm)
+        .padding(.bottom, 16)
+}
+```
+En el primer pase de renderizado de SwiftUI, `viewModel` es `nil`, por lo que la barra de entrada no se incluye en la jerarquía visual. Al ejecutarse `.onAppear`, `viewModel` se inicializa, forzando un segundo ciclo de layout inmediato y un salto visual (layout shift / pop-in).
 
-#### Real-World Impact
-1. **Initial Frame Pop-In**: On the very first frame `SmartInboxView` is rendered by SwiftUI, `viewModel` is `nil`. `NaturalLanguageInputBar` is not present in the body.
-2. When `.onAppear` fires, `viewModel` is set, triggering an immediate layout shift and visual pop-in as the input bar inserts itself at the top of the stack.
-3. If `.onAppear` is delayed due to tab switching or animation transitions, the user sees a header with no input bar.
+#### Remediación
+Inicializar el view model directamente o usar un inicializador con `State(wrappedValue:)`:
+```swift
+@State private var viewModel: InboxViewModel
 
-#### Recommended Remediation
-Initialize `InboxViewModel` deterministically using `@State` default initializers or inject dependencies via view initializers so the view model is available on frame 0.
+init(modelContext: ModelContext, calendarManager: CalendarManager) {
+    _viewModel = State(wrappedValue: InboxViewModel(modelContext: modelContext, calendarManager: calendarManager))
+}
+```
 
 ---
 
-<a id="arch-04"></a>
-### ARCH-04: Direct Store Mutation from Row Views (`TaskRowView` `@Bindable`) Bypass ViewModel Layer
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: MVVM / Separation of Concerns
-* **File**: [`Views/Tasks/TaskRowView.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Tasks/TaskRowView.swift#L20,L222-L226)
+### [MED-03] Violación del Principio de Responsabilidad Única (SRP) en `InboxViewModel`
+- **Severidad**: 🟡 **MEDIUM**
+- **Componente**: [`ViewModels/InboxViewModel.swift:177-254`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L177-L254), [`Views/Completed/CompletedTasksView.swift:57`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L57), [`Views/Projects/ProjectDetailView.swift:72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L72)
+- **Estado**: ⚠️ **OPEN**
 
-#### Problem Description
-`TaskRowView` receives `@Bindable var task: Task`.
-When the completion toggle is tapped and `onToggleComplete` is `nil`:
+#### Descripción
+`InboxViewModel` fue diseñado para manejar el estado del campo de texto de entrada natural (`inputText`, `parsedPreview`, `onInputChange()`) y el proceso de catalogación con Apple Intelligence en el Inbox.
+Sin embargo, `CompletedTasksView` y `ProjectDetailView` instancian `InboxViewModel` únicamente para invocar `viewModel.toggleCompletion(task)`.
+
+Esto genera un acoplamiento innecesario entre pantallas de sólo lectura/historial y la lógica de parsing de texto y dictado por voz.
+
+#### Remediación
+Extraer la lógica de cambio de estado de completado y gestión de recurrencia a un servicio de dominio reutilizable (`TaskCompletionService` o inyectarlo en `CalendarManager` / `TaskCoordinator`):
 ```swift
-task.isCompleted.toggle()
-task.completedAt = task.isCompleted ? Date() : nil
-task.updatedAt = Date()
-```
-The view mutates the SwiftData model directly inside a subview helper method (`complete()`), bypassing view models or coordinators.
+@MainActor
+final class TaskCompletionService {
+    let modelContext: ModelContext
+    let calendarManager: CalendarManager
 
-#### Real-World Impact
-Bypassing the ViewModel layer for task completion prevents side-effects (such as spawning the next occurrence of a recurring task, triggering widget snapshot updates, or syncing EventKit calendar events) from running when a task is toggled in secondary views (e.g. `CompletedTasksView` or `ProjectDetailView`).
+    init(modelContext: ModelContext, calendarManager: CalendarManager) {
+        self.modelContext = modelContext
+        self.calendarManager = calendarManager
+    }
+
+    func toggleCompletion(_ task: Task) async {
+        if task.isCompleted {
+            task.isCompleted = false
+            task.completedAt = nil
+            task.updatedAt = Date()
+            await removeSpawnedSuccessor(of: task)
+            return
+        }
+        if task.isRecurring {
+            await completeRecurring(task)
+        } else {
+            task.isCompleted = true
+            task.completedAt = Date()
+            task.updatedAt = Date()
+        }
+    }
+}
+```
+
+---
+
+## 3. Verificación de Concurrencia y Aislamiento Swift 6
+
+1. **Aislamiento UI**: Todos los ViewModels y servicios que interactúan con `ModelContext` están marcados como `@MainActor`.
+2. **Callbacks de Audio**: `VoiceTaskService.requestSpeechAuthorization()` y `VoiceTaskService.makeTapBlock(...)` son `nonisolated static`, lo que evita aserciones de executor de Swift 6 al ser invocados en hilos en tiempo real de `AVAudioEngine` o colas de TCC.
+3. **Inmutabilidad y Sendable**: `TaskCatalog`, `RecurrenceRule`, `Weekday`, `WidgetSnapshot`, `WidgetTask` son estrictamente `Sendable`.

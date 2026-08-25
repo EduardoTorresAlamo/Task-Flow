@@ -1,131 +1,123 @@
-# Database Schema & Model Graph Audit Report
-
-## 1. Overview
-This module evaluates SwiftData schema definitions, entity relationships (`@Relationship`), deletion rules (`.cascade`, `.nullify`), indexes, constraints, and data graph integrity across `Task`, `Project`, and `Tag`.
-
----
-
-## 2. Findings
-
-<a id="db-01"></a>
-### DB-01: Missing `inverse:` on Self-Referencing Subtask Relationship (`Task.subtasks` vs `Task.parentTask`)
-* **Severity**: 🚨 **CRITICAL**
-* **Category**: Database Schema / Relationship Graph Corruption
-* **File**: [`Models/Task.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Task.swift#L75-L79)
-
-#### Problem Description
-In `Models/Task.swift`:
-```swift
-@Relationship(deleteRule: .cascade) var subtasks: [Task] = []
-var parentTask: Task?
-```
-Neither `subtasks` nor `parentTask` defines an explicit `inverse:` parameter connecting the two properties!
-
-In SwiftData / CoreData backing stores, when a model class contains two relationship properties targeting the same class without an explicit inverse macro declaration, SwiftData synthesizes **two independent relationships**:
-1. `Task_subtasks` (a 1-to-many relationship)
-2. `Task_parentTask` (a separate 1-to-1 relationship)
-
-#### Real-World Impact
-1. **Graph Desynchronization**: Setting `child.parentTask = parent` does NOT automatically add `child` to `parent.subtasks`. Modifying one side of the relationship leaves the other side stale.
-2. **Broken Cascade Deletes**: When a parent `Task` is deleted, `deleteRule: .cascade` operates on the un-linked `subtasks` array. If a child was assigned via `parentTask`, CoreData leaves orphan child rows in SQLite whose `parentTask_id` points to a deleted object ID.
-3. **Runtime Traps**: Fetching an object graph with dangling relationship IDs in SwiftData triggers `EXC_BAD_INSTRUCTION` or `CoreData: annotation: CoreData could not fulfill a fault` crashes.
-
-#### Recommended Remediation
-Explicitly link the parent-child self-referential relationship using `inverse:`:
-```swift
-@Relationship(deleteRule: .cascade, inverse: \Task.parentTask) 
-var subtasks: [Task] = []
-
-var parentTask: Task?
-```
+# Audit Module 03: Database Schema & SwiftData Integrity
+**Repositorio**: Task-Flow  
+**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Fecha de Auditoría**: 24 de Agosto de 2026  
+**Auditor**: Antigravity Senior Security & Software Architect  
+**Scope**: Modelos SwiftData, Relaciones, Reglas de Cascada, Inversas, Índices B-Tree, Contenedor Compartido  
 
 ---
 
-<a id="db-02"></a>
-### DB-02: Asymmetrical Relationship Annotation on `Task.tags` vs `Tag.tasks`
-* **Severity**: 🔴 **HIGH**
-* **Category**: Database Schema / Many-to-Many Join Table Duplication
-* **File**: [`Models/Task.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Task.swift#L82) & [`Models/Tag.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Tag.swift#L27)
+## 1. Resumen Ejecutivo (Executive Summary)
 
-#### Problem Description
-In `Tag.swift`:
-```swift
-@Relationship(inverse: \Task.tags) var tasks: [Task] = []
-```
-In `Task.swift`:
-```swift
-@Relationship var tags: [Tag] = []
-```
-`Tag.swift` declares `inverse: \Task.tags`, but `Task.swift` leaves `@Relationship var tags: [Tag] = []` un-annotated.
+El esquema de base de datos de Task-Flow está modelado mediante **SwiftData** con registro centralizado en `TaskFlowContainer.schema = Schema([Task.self, Project.self, Tag.self])`.
 
-#### Real-World Impact
-In SwiftData, asymmetrical annotations on Many-to-Many relationships can cause the schema generator to create redundant join tables (`Z_TASK_TAGS` vs `Z_TAG_TASKS`) across schema iterations. When `TagStore.apply` appends tags (`task.tags.append(tag)`), duplicate entries can be created in SQLite backing store.
+Las relaciones estructurales cuentan con enlaces inversos explícitos:
+- `Task.project` (`deleteRule: .nullify`) <-> `Project.tasks` (`inverse: \Task.project`)
+- `Task.subtasks` (`deleteRule: .cascade, inverse: \Task.parentTask`) <-> `Task.parentTask`
+- `Task.tags` <-> `Tag.tasks` (`inverse: \Task.tags`)
 
-#### Recommended Remediation
-Explicitly declare the inverse on both sides or align relationship annotations:
-```swift
-// In Task.swift:
-@Relationship(inverse: \Tag.tasks) var tags: [Tag] = []
+Se identificaron dos puntos de mejora e integridad:
+1. **[MED-01] OPEN**: La eliminación en cascada de subtareas omite la desincronización en EventKit.
+2. **[LOW-01] OPEN**: Ausencia de índices compuestos en los predicados de consulta más frecuentes.
+
+---
+
+## 2. Diagrama Entidad-Relación y Estructura del Esquema
+
+```mermaid
+erDiagram
+    Task {
+        UUID id PK
+        String title
+        String notes
+        Date dueDate
+        Priority priority
+        Bool isCompleted
+        Date completedAt
+        Date createdAt
+        Date updatedAt
+        String eventKitIdentifier INDEX
+        RecurrenceRule recurrenceRule
+        Date recurrenceEnd
+        Int recurrenceCount
+        UUID spawnedSuccessorID
+    }
+    Project {
+        UUID id PK
+        String name
+        String colorHex
+        String symbolName
+        Date createdAt
+    }
+    Tag {
+        UUID id PK
+        String name
+        String colorHex
+    }
+
+    Task }|--o| Project : "belongs to (nullify)"
+    Task ||--o{ Task : "subtasks (cascade, inverse: parentTask)"
+    Task }|--|{ Tag : "tags (many-to-many)"
 ```
 
 ---
 
-<a id="db-03"></a>
-### DB-03: Unindexed Query Target on `Task.eventKitIdentifier`
-* **Severity**: 🔴 **HIGH**
-* **Category**: Database Schema / Performance / Missing Index
-* **File**: [`Models/Task.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Task.swift#L46) & [`Services/CalendarManager.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L203)
+## 3. Hallazgos Detallados
 
-#### Problem Description
-In `CalendarManager.importCalendarEvents`:
+### [MED-01] Eliminación en Cascada de Subtareas Omite Desincronización en EventKit
+- **Severidad**: 🟡 **MEDIUM**
+- **Componente**: [`Models/Task.swift:103`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Task.swift#L103), [`Views/Tasks/TaskEditView.swift:76-80`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Tasks/TaskEditView.swift#L76-L80)
+- **CWE**: CWE-404 (Improper Resource Shutdown or Release)
+- **Estado**: ⚠️ **OPEN**
+
+#### Descripción
+En `Models/Task.swift`:
 ```swift
-let descriptor = FetchDescriptor<Task>(predicate: #Predicate { $0.eventKitIdentifier == identifier })
-let existing = (try? context.fetch(descriptor)) ?? []
+@Relationship(deleteRule: .cascade, inverse: \Task.parentTask) var subtasks: [Task] = []
 ```
-In `Models/Task.swift`:
+Cuando se elimina una tarea padre mediante `modelContext.delete(parentTask)`, SwiftData elimina automáticamente en cascada todas las filas de `subtasks` en SQLite.
+Sin embargo, el callback de eliminación de la vista solo ejecuta:
 ```swift
-var eventKitIdentifier: String?
+await calendarManager.removeSync(for: task)
+modelContext.delete(task)
 ```
-`eventKitIdentifier` is repeatedly queried during EventKit import and calendar sync passes, but it has no index or uniqueness constraint defined in SwiftData.
+Si alguna subtarea tenía fecha de vencimiento y estaba sincronizada con Apple Calendar (`subtask.eventKitIdentifier != nil`), su evento en Calendar nunca es eliminado, quedando como un evento huérfano en Apple Calendar.
 
-#### Real-World Impact
-Every calendar import pass executes an un-indexed SQL table scan (`SELECT * FROM ZTASK WHERE ZEVENTKITIDENTIFIER = ?`) across every single task in the database. As the task database grows (1,000+ tasks), calendar sync performance degrades exponentially, stalling the main thread.
-
-#### Recommended Remediation
-Add `@Attribute(.unique)` or `@Attribute(.indexed)` to `eventKitIdentifier`:
+#### Remediación
+Implementar una función de limpieza recursiva de eventos antes de invocar la eliminación en el contexto:
 ```swift
-@Attribute(.unique) var eventKitIdentifier: String?
-```
-
----
-
-<a id="db-04"></a>
-### DB-04: Duplicate Project Names Allowed with No Schema Unique Constraint
-* **Severity**: 🟡 **MEDIUM**
-* **Category**: Database Schema / Data Quality
-* **File**: [`Models/Project.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Project.swift#L17) & [`Services/TaskIntelligenceService.swift`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/TaskIntelligenceService.swift#L277-L280)
-
-#### Problem Description
-`Project.swift` defines `var name: String` with no uniqueness constraint. The user can create multiple projects with the exact same name (e.g. two projects named "Work").
-
-When `TaskIntelligenceService` categorizes a task:
-```swift
-let projectName: String? = rawProject.caseInsensitiveCompare(noProjectSentinel) == .orderedSame
-    ? nil
-    : allowedProjects.first { $0.caseInsensitiveCompare(rawProject) == .orderedSame }
-```
-`InboxViewModel` resolves the returned string via:
-```swift
-if task.project == nil, let name = result.projectName {
-    task.project = projects.first { $0.name == name }
+func deleteWithSubtasks(_ task: Task, calendarManager: CalendarManager, context: ModelContext) async {
+    for subtask in task.subtasks {
+        await deleteWithSubtasks(subtask, calendarManager: calendarManager, context: context)
+    }
+    await calendarManager.removeSync(for: task)
+    context.delete(task)
 }
 ```
 
-#### Real-World Impact
-If two projects share the name "Work", `projects.first` non-deterministically files tasks into whichever project happens to be fetched first by SwiftData. The user has no control over which "Work" project receives auto-filed tasks.
+---
 
-#### Recommended Remediation
-Add `@Attribute(.unique)` to `Project.name` or validate project name uniqueness in `ProjectEditView` before saving.
+### [LOW-01] Falta de Índice Compuesto en Predicados de Filtro Frecuentes
+- **Severidad**: 🔵 **LOW**
+- **Componente**: [`Models/Task.swift:15`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Models/Task.swift#L15)
+- **CWE**: CWE-400 (Unindexed Database Queries / Table Scan Overhead)
+- **Estado**: ⚠️ **OPEN**
+
+#### Descripción
+`Task.swift` declara un único índice B-Tree:
 ```swift
-@Attribute(.unique) var name: String
+#Index<Task>([\.eventKitIdentifier])
+```
+No obstante, las consultas más frecuentes en la UI y extensiones evalúan:
+1. `#Predicate<Task> { !$0.isCompleted }` (`SmartInboxView`, `WidgetSnapshotPublisher`)
+2. `#Predicate<Task> { !$0.isCompleted && $0.dueDate != nil }` (`WidgetSnapshotPublisher`)
+3. `#Predicate<Task> { $0.isCompleted }` (`CompletedTasksView`)
+
+Sin un índice en `isCompleted` y `dueDate`, SQLite debe realizar escaneos completos de tabla para filtrar las tareas activas de las completadas.
+
+#### Remediación
+Añadir índice compuesto en `Task.swift`:
+```swift
+#Index<Task>([\.eventKitIdentifier])
+#Index<Task>([\.isCompleted, \.dueDate])
 ```
