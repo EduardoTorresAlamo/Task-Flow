@@ -155,7 +155,7 @@ final class CalendarManager {
         // phantom event starting "now" (CalendarSyncService falls back to Date()).
         guard task.dueDate != nil else { return }
         syncState = .syncing
-        syncService.sync(task: task)
+        await syncService.sync(task: task)
         syncState = .done(lastSyncedAt: Date())
     }
 
@@ -174,7 +174,7 @@ final class CalendarManager {
         let eligible = tasks.filter { $0.dueDate != nil && !$0.isCompleted }
         syncState = .syncing
         for task in eligible {
-            syncService.sync(task: task)
+            await syncService.sync(task: task)
         }
         syncState = .done(lastSyncedAt: Date())
     }
@@ -185,7 +185,7 @@ final class CalendarManager {
     ///
     /// - Parameter task: The task whose linked calendar event should be removed.
     func removeSync(for task: Task) async {
-        syncService.deleteEvent(for: task)
+        await syncService.deleteEvent(for: task)
     }
 
     // MARK: - Import
