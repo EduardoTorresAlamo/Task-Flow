@@ -69,31 +69,29 @@ import os.log
         ekEvent.location = enriched.location
         if let url = enriched.url { ekEvent.url = url }
 
-        // Recurrence is handled independently of the scalar fields above.
+        // Recurrence is app-managed, never EventKit-managed.
         //
-        // A recurrence rule describes the whole series, so writing or removing
-        // one must be saved with `.futureEvents`; EventKit rejects a recurrence
-        // change saved with `.thisEvent`. The previous code unconditionally set
-        // `recurrenceRules = nil` in the non-recurring branch and then saved
-        // with `.thisEvent`. That did two harmful things: for a task the user
-        // had made repeating directly in Calendar it wiped their rule, and for
-        // an existing recurring occurrence the nil-with-.thisEvent combination
-        // threw, so the write silently failed and retried forever.
+        // Task-Flow models a repeating task as a chain of discrete `Task` rows:
+        // completing one spawns the next occurrence (see
+        // `InboxViewModel.completeRecurring`), and each occurrence carries the
+        // same `recurrenceRule`. Every occurrence therefore maps to exactly one
+        // calendar event on its own due date.
         //
-        // The fix decouples the two cases and picks a matching span:
-        //   - task has a rule  → mirror it, save the series (`.futureEvents`)
-        //   - task has no rule → leave whatever recurrence the event already
-        //     carries untouched and save just this occurrence (`.thisEvent`)
-        let saveSpan: EKSpan
-        if let rule = task.recurrenceRule {
-            ekEvent.recurrenceRules = [Self.ekRecurrenceRule(from: rule)]
-            saveSpan = .futureEvents
-        } else {
-            saveSpan = .thisEvent
-        }
-
+        // Authoring an `EKRecurrenceRule` here would make EventKit *also* expand
+        // each occurrence into its own open-ended series saved with
+        // `.futureEvents`. Because every spawned occurrence re-ran that path, N
+        // completions produced N overlapping series — the recurring event
+        // duplicated on every completion, growing without bound. We mirror
+        // discrete occurrences only: no recurrence rule is written, and just
+        // this event is saved with `.thisEvent`.
+        //
+        // Any rule already on the event (a series created before this change, or
+        // one the user added in Calendar) is left untouched. Clearing it would
+        // require a `.futureEvents` save that wipes the user's own rule, and
+        // modifying `recurrenceRules` then saving `.thisEvent` throws; leaving it
+        // alone edits only this occurrence and never throws.
         do {
-            try store.save(ekEvent, span: saveSpan)
+            try store.save(ekEvent, span: .thisEvent)
             // Persist the stable identifier so we can re-find this event later.
             task.eventKitIdentifier = ekEvent.eventIdentifier
         } catch {
@@ -144,92 +142,5 @@ import os.log
             return selected
         }
         return store.defaultCalendarForNewEvents
-    }
-
-    // MARK: - Recurrence Mapping
-
-    /// Translates a Task-Flow `RecurrenceRule` into the equivalent EventKit
-    /// `EKRecurrenceRule` so a repeating task mirrors as a repeating event.
-    ///
-    /// The rule's `endDate` takes precedence for the recurrence end; if absent,
-    /// a `maxOccurrences` cap is expressed as an occurrence-count end. `.weekdays`
-    /// is modelled as a weekly rule constrained to Monday-Friday, and `.biweekly`
-    /// as a weekly rule with a two-week interval.
-    ///
-    /// - Parameter rule: The task's recurrence specification.
-    /// - Returns: A configured `EKRecurrenceRule`.
-    private static func ekRecurrenceRule(from rule: RecurrenceRule) -> EKRecurrenceRule {
-        let end: EKRecurrenceEnd?
-        if let endDate = rule.endDate {
-            end = EKRecurrenceEnd(end: endDate)
-        } else if let maxOccurrences = rule.maxOccurrences {
-            end = EKRecurrenceEnd(occurrenceCount: maxOccurrences)
-        } else {
-            end = nil
-        }
-
-        switch rule.frequency {
-        case .daily:
-            return EKRecurrenceRule(recurrenceWith: .daily, interval: rule.interval, end: end)
-        case .yearly:
-            return EKRecurrenceRule(recurrenceWith: .yearly, interval: rule.interval, end: end)
-        case .weekdays:
-            let businessDays = Weekday.allCases
-                .filter(\.isBusinessDay)
-                .map { EKRecurrenceDayOfWeek(ekWeekday($0)) }
-            return EKRecurrenceRule(
-                recurrenceWith: .weekly,
-                interval: 1,
-                daysOfTheWeek: businessDays,
-                daysOfTheMonth: nil,
-                monthsOfTheYear: nil,
-                weeksOfTheYear: nil,
-                daysOfTheYear: nil,
-                setPositions: nil,
-                end: end
-            )
-        case .weekly(let day):
-            return EKRecurrenceRule(
-                recurrenceWith: .weekly,
-                interval: rule.interval,
-                daysOfTheWeek: [EKRecurrenceDayOfWeek(ekWeekday(day))],
-                daysOfTheMonth: nil,
-                monthsOfTheYear: nil,
-                weeksOfTheYear: nil,
-                daysOfTheYear: nil,
-                setPositions: nil,
-                end: end
-            )
-        case .biweekly(let day):
-            return EKRecurrenceRule(
-                recurrenceWith: .weekly,
-                interval: 2,
-                daysOfTheWeek: [EKRecurrenceDayOfWeek(ekWeekday(day))],
-                daysOfTheMonth: nil,
-                monthsOfTheYear: nil,
-                weeksOfTheYear: nil,
-                daysOfTheYear: nil,
-                setPositions: nil,
-                end: end
-            )
-        case .monthly(let day):
-            return EKRecurrenceRule(
-                recurrenceWith: .monthly,
-                interval: rule.interval,
-                daysOfTheWeek: nil,
-                daysOfTheMonth: [NSNumber(value: day)],
-                monthsOfTheYear: nil,
-                weeksOfTheYear: nil,
-                daysOfTheYear: nil,
-                setPositions: nil,
-                end: end
-            )
-        }
-    }
-
-    /// Maps a Task-Flow `Weekday` to its EventKit counterpart. Both use the
-    /// Sunday = 1 ... Saturday = 7 numbering, so the raw value maps directly.
-    private static func ekWeekday(_ weekday: Weekday) -> EKWeekday {
-        EKWeekday(rawValue: weekday.rawValue) ?? .monday
     }
 }
