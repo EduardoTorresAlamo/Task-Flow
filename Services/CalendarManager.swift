@@ -188,6 +188,24 @@ final class CalendarManager {
         await syncService.deleteEvent(for: task)
     }
 
+    /// Removes the calendar events for a task **and all of its subtasks**,
+    /// depth-first.
+    ///
+    /// Deleting a task cascades to its subtasks in SwiftData
+    /// (`@Relationship(deleteRule: .cascade)`), but that cascade only removes the
+    /// SwiftData rows — it does not remove the subtasks' mirrored calendar
+    /// events, which would be left orphaned in the user's Calendar. Call this
+    /// before `modelContext.delete(task)` so every synced event in the subtree is
+    /// removed first.
+    ///
+    /// - Parameter task: The root task of the subtree about to be deleted.
+    func removeSyncTree(for task: Task) async {
+        for subtask in task.subtasks {
+            await removeSyncTree(for: subtask)
+        }
+        await removeSync(for: task)
+    }
+
     // MARK: - Import
 
     /// Imports calendar events from the system Calendar into SwiftData as new `Task` objects.

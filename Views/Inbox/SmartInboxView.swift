@@ -94,11 +94,13 @@ struct SmartInboxView: View {
         }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
-                // Remove the calendar event first, then delete the task inside the
-                // same async task. Deleting synchronously here would invalidate the
-                // model before the scheduled removeSync could read task.eventKitIdentifier.
+                // Remove the calendar events for the task and its subtasks first,
+                // then delete inside the same async task. Deleting synchronously
+                // here would invalidate the models before the scheduled
+                // removeSyncTree could read their eventKitIdentifiers; the cascade
+                // delete drops subtask rows but not their calendar events.
                 Swift.Task {
-                    await calendarManager.removeSync(for: task)
+                    await calendarManager.removeSyncTree(for: task)
                     modelContext.delete(task)
                 }
             }

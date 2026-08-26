@@ -74,8 +74,11 @@ struct ProjectDetailView: View {
         }
         .sheet(item: $selectedTask) { task in
             TaskEditView(task: task) {
+                // Remove the calendar events for the task and its subtasks before
+                // deleting: the cascade delete drops subtask rows but not their
+                // mirrored calendar events, which would otherwise be orphaned.
                 Swift.Task {
-                    await calendarManager.removeSync(for: task)
+                    await calendarManager.removeSyncTree(for: task)
                     modelContext.delete(task)
                 }
             }
