@@ -1,59 +1,62 @@
 # Audit Module 06: Dead Code, Code Smells & Build Settings
-**Repositorio**: Task-Flow  
-**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
-**Fecha de Auditoría**: 24 de Agosto de 2026  
-**Auditor**: Antigravity Senior Security & Software Architect  
-**Scope**: Código Muerto, Estado No Renderizado, Directorios Vacíos, Configuración de Build y Cobertura de Tests  
+**Repository**: Task-Flow  
+**Path**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Audit Date**: August 26, 2026  
+**Auditor**: Antigravity Principal Security & Software Systems Architect  
+**Scope**: Dead Code, Unused Public APIs, Orphaned State Properties, Test Coverage, XcodeGen Build Configurations  
 
 ---
 
-## 1. Resumen Ejecutivo (Executive Summary)
+## 1. Executive Summary
 
-Se realizó una búsqueda exhaustiva de código muerto, métodos sin llamadas, variables de estado huérfanas y configuraciones obsoletas en todo el proyecto.
+An exhaustive audit of public interfaces, unused properties, directory structures, and build settings was conducted.
 
-Se identificaron tres hallazgos clave:
-1. **[LOW-02] OPEN**: 3 métodos públicos en `CalendarManager` sin ningún invocador en la aplicación.
-2. **[LOW-04] OPEN**: Falta de target de tests unitarios (`Task-FlowTests`) en `project.yml`.
-3. **[LOW-05] OPEN**: Variables de estado (`catalogError` y `syncState`) actualizadas internamente pero nunca renderizadas en la interfaz de usuario.
+### Identified Technical Debt & Code Smells:
+- **[LOW-02] OPEN**: Three public methods and auxiliary data structures in `CalendarManager` have zero invocations in the application.
+- **[LOW-04] OPEN**: Absence of a unit test bundle target (`Task-FlowTests`) in `project.yml`.
+- **[LOW-05] OPEN**: Observable properties (`catalogError`, `syncState`) are tracked but never displayed in UI; empty directory `Views/Timeline/` left in repo.
 
 ---
 
-## 2. Hallazgos Detallados
+## 2. Detailed Findings
 
-### [LOW-02] Métodos Huérfanos en `CalendarManager` (`syncAllTasks`, `importCalendarEvents`, `detectConflicts`)
-- **Severidad**: 🔵 **LOW**
-- **Componente**: [`Services/CalendarManager.swift:168-180, 203-227, 240-250`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L168-L180)
-- **Estado**: ⚠️ **OPEN**
+### [LOW-02] Orphaned Public API Surface in `CalendarManager`
+- **Severity**: 🔵 **LOW**
+- **Location**: [`Services/CalendarManager.swift:168-180, 203-227, 240-250`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L168-L180)
+- **Status**: ⚠️ **OPEN**
 
-#### Descripción
-`CalendarManager.swift` expone tres funciones públicas completas con sus estructuras auxiliares (`ConflictPair`):
+#### Technical Analysis
+`CalendarManager.swift` implements three full public APIs:
 1. `syncAllTasks(_ tasks: [Task]) async` (:168)
 2. `importCalendarEvents(from:to:context:) async -> Int` (:203)
-3. `detectConflicts(for:) -> [ConflictPair]` (:240)
+3. `detectConflicts(for:) -> [ConflictPair]` (:240) and `struct ConflictPair` (:44)
 
-Una búsqueda en todo el repositorio confirma que **ninguna vista, ViewModel ni servicio invoca estos métodos**.
+A global search confirms that no view, view model, or service in the repository calls these methods.
 
-#### Remediación
-- Conectar estas funciones a flujos de UI (e.g. pantalla de Ajustes para importar eventos o banner de advertencia de solapamiento en `TaskEditView`).
-- O marcarlas como deprecadas / removerlas para reducir la superficie de mantenimiento.
+#### Remediation Options
+1. **Connect to Feature UI**: Expose "Import from Calendar" or a conflict alert banner in `TaskEditView`.
+2. **Deprecate / Prune**: If not part of the active product scope, deprecate or remove these methods to reduce maintenance overhead.
 
 ---
 
-### [LOW-04] Ausencia de Target de Tests Unitarios Automatizados
-- **Severidad**: 🔵 **LOW**
-- **Componente**: [`project.yml:19-61`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/project.yml#L19-L61), [`CLAUDE.md:49`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/CLAUDE.md#L49)
-- **Estado**: ⚠️ **OPEN**
+### [LOW-04] Total Absence of Automated Unit Test Target
+- **Severity**: 🔵 **LOW**
+- **Location**: [`project.yml:19-61`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/project.yml#L19-L61), [`CLAUDE.md:49`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/CLAUDE.md#L49)
+- **Status**: ⚠️ **OPEN**
 
-#### Descripción
-`project.yml` no incluye ningún target `type: bundle.unit-test`. Los componentes críticos y deterministas:
-- `NaturalLanguageParser` (extracción de fechas, prioridades, conectores y marcadores de recurrencia)
-- `RecurrenceRule` (cálculo de fechas siguientes, días hábiles, clamping de fin de mes)
-- `TaskGrouping` (clasificación en Overdue, Today, Tomorrow, Later, Someday)
-- `IntelligenceEnricher` (NER y extracción de duraciones)
-carecen de un suite de pruebas automatizado que prevenga regresiones durante refactorizaciones.
+#### Technical Analysis
+`project.yml` configures two targets: `Task-Flow` (Application) and `TaskFlowWidgetExtension` (Widget Extension). There is no test bundle target.
 
-#### Remediación
-Configurar `Task-FlowTests` en `project.yml`:
+Critical, deterministic components:
+- `NaturalLanguageParser` (date detection, priority extraction, word-boundary recurrence parsing)
+- `RecurrenceRule` (next occurrence date arithmetic, business day calculation, month-end clamping)
+- `TaskGrouping` (dated section bucketing into Overdue, Today, Tomorrow, Later, Someday)
+- `IntelligenceEnricher` (NER extraction and duration parsing)
+
+currently lack an automated test suite, leaving them vulnerable to subtle regressions during refactoring.
+
+#### Concrete Remediation
+Add a unit test target in `project.yml`:
 ```yaml
 targets:
   Task-FlowTests:
@@ -63,28 +66,32 @@ targets:
       - path: Tests
     dependencies:
       - target: Task-Flow
+    settings:
+      base:
+        SWIFT_STRICT_CONCURRENCY: complete
 ```
 
 ---
 
-### [LOW-05] Variables de Estado Huérfanas No Renderizadas en la UI
-- **Severidad**: 🔵 **LOW**
-- **Componente**: [`ViewModels/InboxViewModel.swift:52`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L52), [`Services/CalendarManager.swift:64`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L64)
-- **Estado**: ⚠️ **OPEN**
+### [LOW-05] Unrendered Observable State Properties & Empty Directory
+- **Severity**: 🔵 **LOW**
+- **Location**: [`ViewModels/InboxViewModel.swift:52`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L52), [`Services/CalendarManager.swift:64`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/CalendarManager.swift#L64), `Views/Timeline/`
+- **Status**: ⚠️ **OPEN**
 
-#### Descripción
-1. **`InboxViewModel.catalogError`**: Declarada como `var catalogError: String?` con el comentario `/// The most recent cataloging failure, for display in the Inbox.` Se actualiza ante fallos de `TaskIntelligenceService`, pero ninguna vista en la jerarquía de `SmartInboxView` la lee ni muestra un banner de error.
-2. **`CalendarManager.syncState`**: Actualizada a `.syncing`, `.done` y `.error`, pero ninguna vista de la app observa ni comunica visualmente los fallos de sincronización de calendario al usuario.
-3. **`Views/Timeline/`**: Es un directorio vacío en el árbol de archivos.
+#### Technical Analysis
+1. **`InboxViewModel.catalogError`**: Updated when `TaskIntelligenceService` fails, but no view in `SmartInboxView` renders an error banner or toast.
+2. **`CalendarManager.syncState`**: Updated to `.syncing`, `.done`, and `.error`, but never observed by any UI component.
+3. **`Views/Timeline/`**: Empty directory in the file system.
 
-#### Remediación
-- Agregar un banner visual discreto en `SmartInboxView` para mostrar `catalogError` y `syncState.error`.
-- Eliminar el directorio vacío `Views/Timeline/`.
+#### Recommended Action
+- Surface a subtle non-intrusive status banner for cataloging and sync failures in `SmartInboxView`.
+- Remove the empty `Views/Timeline/` directory.
 
 ---
 
-## 3. Estado de Deprecaciones y Toolchain
+## 3. Toolchain & Deprecation Notes
 
-### Advertencia de `installTap` en `VoiceTaskService.swift`
-- **Ubicación**: [`Services/VoiceTaskService.swift:216`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/VoiceTaskService.swift#L216)
-- **Diagnóstico**: Advertencia esperada bajo el SDK de iOS 27 beta. `installTap` está deprecada en favor de la variante throwing `installTapOnBus:bufferSize:format:error:block:`, la cual está anotada como `NS_REFINED_FOR_SWIFT` en las cabeceras de Objective-C pero carece de wrapper público en el overlay Swift de Xcode 27 beta (`27A5228h`). La implementación actual es la única invocable de forma segura desde Swift.
+### `installTap` Warning in `VoiceTaskService.swift`
+- **Location**: [`Services/VoiceTaskService.swift:216`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Services/VoiceTaskService.swift#L216)
+- **Status**: **Expected Toolchain Behavior**
+- **Explanation**: In Xcode 27 beta (`27A5228h`), `installTap(onBus:bufferSize:format:block:)` is marked deprecated in favor of `installTapOnBus:bufferSize:format:error:block:`. However, the throwing variant is marked `NS_REFINED_FOR_SWIFT` in Objective-C headers and lacks a public Swift wrapper in beta 1. The deprecated overload is the only valid, callable method from Swift. The build is otherwise 100% warning-free.

@@ -1,36 +1,36 @@
 # Audit Module 04: Architecture & Design Patterns
-**Repositorio**: Task-Flow  
-**Ruta**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
-**Fecha de Auditoría**: 24 de Agosto de 2026  
-**Auditor**: Antigravity Senior Security & Software Architect  
-**Scope**: MVVM con `@Observable`, Concurrencia Estricta Swift 6, Inyección de Dependencias, Ciclos de Vida SwiftUI  
+**Repository**: Task-Flow  
+**Path**: `/Users/eduardotorres/Developer/XCodes/Task-Flow`  
+**Audit Date**: August 26, 2026  
+**Auditor**: Antigravity Principal Security & Software Systems Architect  
+**Scope**: MVVM Architecture, `@Observable` Integration, Swift 6 Strict Concurrency, Single Responsibility Principle, SwiftUI View Lifecycles  
 
 ---
 
-## 1. Resumen Ejecutivo (Executive Summary)
+## 1. Executive Summary
 
-Task-Flow sigue un patrón arquitectónico moderno basado en SwiftUI y ViewModels `@Observable` bajo Swift 6 strict concurrency.
+Task-Flow adopts a modern MVVM architecture leveraging Swift 6 `@Observable` macro bindings, `@MainActor` isolation, and strict concurrency checking (`SWIFT_STRICT_CONCURRENCY: complete`).
 
-Puntos arquitectónicos clave:
-- **`AppServices`**: Centraliza la inicialización de servicios y el contenedor de SwiftData sin re-instanciación redundante en `TaskFlowApp`.
-- **Aislamiento de Concurrencia**: Tipos `@MainActor` bien delimitados y closures de audio desacoplados (`nonisolated static`).
+### Architectural Strengths Verified:
+- **Dependency Graph Management**: `AppServices` (`App/TaskFlowApp.swift`) constructs the interdependent service graph lazily once, injecting instances via SwiftUI `.environment` modifiers.
+- **Strict Concurrency Safety**: Realtime audio callbacks (`AVAudioNodeTapBlock`) and TCC authorization handlers in `VoiceTaskService` are factored into `nonisolated static` methods to eliminate runtime `SIGTRAP` executor traps.
 
-Se identifican dos áreas de mejora arquitectónica:
-1. **[MED-02] OPEN**: Inicialización de ViewModels opcionales `@State` en `.onAppear`.
-2. **[MED-03] OPEN**: Violación de SRP por acoplamiento de múltiples vistas a `InboxViewModel`.
+### Identified Architectural Deficiencies:
+- **[MED-02] OPEN**: Lazy `@State` ViewModel initialization in `.onAppear` causing layout pop-in and double render passes.
+- **[MED-03] OPEN**: Single Responsibility Principle (SRP) violation on `InboxViewModel`.
 
 ---
 
-## 2. Hallazgos Detallados
+## 2. Detailed Architectural Findings
 
-### [MED-02] Inicialización Lazy de ViewModels Opcionales `@State` en `.onAppear`
-- **Severidad**: 🟡 **MEDIUM**
-- **Componente**: [`Views/Inbox/SmartInboxView.swift:40,84-86`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L40), [`Views/Completed/CompletedTasksView.swift:30,56-58`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L30), [`Views/Projects/ProjectDetailView.swift:22,70-72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L22)
+### [MED-02] Lazy `@State` Optional ViewModel Initialization in `.onAppear`
+- **Severity**: 🟡 **MEDIUM**
+- **Location**: [`Views/Inbox/SmartInboxView.swift:40,84-86`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Inbox/SmartInboxView.swift#L40), [`Views/Completed/CompletedTasksView.swift:30,56-58`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L30), [`Views/Projects/ProjectDetailView.swift:22,70-72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L22)
 - **CWE**: CWE-1076 (Code Quality / Architectural Anti-Pattern)
-- **Estado**: ⚠️ **OPEN**
+- **Status**: ⚠️ **OPEN**
 
-#### Descripción
-En las vistas de Inbox, Done y Detalle de Proyecto, los view models se declaran como `@State private var viewModel: InboxViewModel?` y se instancian condicionalmente en `.onAppear`:
+#### Technical Analysis
+In `SmartInboxView`, `CompletedTasksView`, and `ProjectDetailView`, view models are declared as optional `@State` properties:
 ```swift
 @State private var viewModel: InboxViewModel?
 
@@ -40,17 +40,17 @@ En las vistas de Inbox, Done y Detalle de Proyecto, los view models se declaran 
     }
 }
 ```
-En `SmartInboxView.swift`:
+In `SmartInboxView.swift:64-67`:
 ```swift
 if let vm = viewModel {
     NaturalLanguageInputBar(viewModel: vm)
         .padding(.bottom, 16)
 }
 ```
-En el primer pase de renderizado de SwiftUI, `viewModel` es `nil`, por lo que la barra de entrada no se incluye en la jerarquía visual. Al ejecutarse `.onAppear`, `viewModel` se inicializa, forzando un segundo ciclo de layout inmediato y un salto visual (layout shift / pop-in).
+During the initial SwiftUI body evaluation, `viewModel` is `nil`. Consequently, `NaturalLanguageInputBar` is excluded from the initial layout pass. When `.onAppear` fires, `viewModel` is assigned, triggering an immediate second layout pass and causing a noticeable visual pop-in (layout shift).
 
-#### Remediación
-Inicializar el view model directamente o usar un inicializador con `State(wrappedValue:)`:
+#### Recommended Pattern
+Construct the view model deterministically or pass dependencies directly into custom view initializers using `State(wrappedValue:)`:
 ```swift
 @State private var viewModel: InboxViewModel
 
@@ -61,53 +61,54 @@ init(modelContext: ModelContext, calendarManager: CalendarManager) {
 
 ---
 
-### [MED-03] Violación del Principio de Responsabilidad Única (SRP) en `InboxViewModel`
-- **Severidad**: 🟡 **MEDIUM**
-- **Componente**: [`ViewModels/InboxViewModel.swift:177-254`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L177-L254), [`Views/Completed/CompletedTasksView.swift:57`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L57), [`Views/Projects/ProjectDetailView.swift:72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L72)
-- **Estado**: ⚠️ **OPEN**
+### [MED-03] Single Responsibility Principle (SRP) Violation in `InboxViewModel`
+- **Severity**: 🟡 **MEDIUM**
+- **Location**: [`ViewModels/InboxViewModel.swift:177-254`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/ViewModels/InboxViewModel.swift#L177-L254), [`Views/Completed/CompletedTasksView.swift:57`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Completed/CompletedTasksView.swift#L57), [`Views/Projects/ProjectDetailView.swift:72`](file:///Users/eduardotorres/Developer/XCodes/Task-Flow/Views/Projects/ProjectDetailView.swift#L72)
+- **Status**: ⚠️ **OPEN**
 
-#### Descripción
-`InboxViewModel` fue diseñado para manejar el estado del campo de texto de entrada natural (`inputText`, `parsedPreview`, `onInputChange()`) y el proceso de catalogación con Apple Intelligence en el Inbox.
-Sin embargo, `CompletedTasksView` y `ProjectDetailView` instancian `InboxViewModel` únicamente para invocar `viewModel.toggleCompletion(task)`.
+#### Technical Analysis
+`InboxViewModel` is responsible for:
+1. Managing the live text input and preview state for `NaturalLanguageInputBar`.
+2. Driving `NaturalLanguageParser` and `TaskIntelligenceService` cataloging.
+3. Managing task completion state toggling, recurrence advancement, and successor deletion.
 
-Esto genera un acoplamiento innecesario entre pantallas de sólo lectura/historial y la lógica de parsing de texto y dictado por voz.
+`CompletedTasksView` and `ProjectDetailView` instantiate full `InboxViewModel` instances exclusively to call `viewModel.toggleCompletion(task)`. This creates unnecessary coupling across unrelated screens to the NLP parser and Apple Intelligence services.
 
-#### Remediación
-Extraer la lógica de cambio de estado de completado y gestión de recurrencia a un servicio de dominio reutilizable (`TaskCompletionService` o inyectarlo en `CalendarManager` / `TaskCoordinator`):
-```swift
-@MainActor
-final class TaskCompletionService {
-    let modelContext: ModelContext
-    let calendarManager: CalendarManager
+#### Recommended Architecture: Domain Service Extraction
+Extract completion and recurrence logic into a dedicated domain service:
 
-    init(modelContext: ModelContext, calendarManager: CalendarManager) {
-        self.modelContext = modelContext
-        self.calendarManager = calendarManager
+```mermaid
+classDiagram
+    class TaskCompletionService {
+        +ModelContext modelContext
+        +CalendarManager calendarManager
+        +toggleCompletion(Task) async
+        +completeRecurring(Task) async
+        +removeSpawnedSuccessor(Task) async
     }
-
-    func toggleCompletion(_ task: Task) async {
-        if task.isCompleted {
-            task.isCompleted = false
-            task.completedAt = nil
-            task.updatedAt = Date()
-            await removeSpawnedSuccessor(of: task)
-            return
-        }
-        if task.isRecurring {
-            await completeRecurring(task)
-        } else {
-            task.isCompleted = true
-            task.completedAt = Date()
-            task.updatedAt = Date()
-        }
+    
+    class InboxViewModel {
+        +String inputText
+        +ParsedTaskInput parsedPreview
+        +TaskIntelligenceService intelligence
+        +commitTask() async
     }
-}
+    
+    TaskCompletionService <-- InboxViewModel : delegates completion
+    TaskCompletionService <-- CompletedTasksView : uses
+    TaskCompletionService <-- ProjectDetailView : uses
 ```
 
 ---
 
-## 3. Verificación de Concurrencia y Aislamiento Swift 6
+## 3. Swift 6 Strict Concurrency & Actor Boundary Analysis
 
-1. **Aislamiento UI**: Todos los ViewModels y servicios que interactúan con `ModelContext` están marcados como `@MainActor`.
-2. **Callbacks de Audio**: `VoiceTaskService.requestSpeechAuthorization()` y `VoiceTaskService.makeTapBlock(...)` son `nonisolated static`, lo que evita aserciones de executor de Swift 6 al ser invocados en hilos en tiempo real de `AVAudioEngine` o colas de TCC.
-3. **Inmutabilidad y Sendable**: `TaskCatalog`, `RecurrenceRule`, `Weekday`, `WidgetSnapshot`, `WidgetTask` son estrictamente `Sendable`.
+### 1. Framework Callback Isolation (`SIGTRAP` Prevention)
+In Swift 6, closures written inline inside `@MainActor` classes inherit main actor isolation. If a system framework invokes that closure from an arbitrary background queue or realtime thread, Swift runtime emits an executor assertion trap (`SIGTRAP`).
+
+Task-Flow handles this with exemplary design in `VoiceTaskService.swift`:
+- `requestSpeechAuthorization()`: Annotated as `nonisolated static` to receive TCC callbacks from `com.apple.root.default-qos` safely.
+- `makeTapBlock(...)`: Annotated as `nonisolated static` to allow `AVAudioEngine` realtime audio threads to execute without asserting main-actor affinity.
+
+### 2. Sendable Types
+All data-transfer and model-adjacent types (`TaskCatalog`, `RecurrenceRule`, `Weekday`, `WidgetSnapshot`, `WidgetTask`, `WidgetProject`) conform strictly to `Sendable`.
